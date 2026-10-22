@@ -1,0 +1,148 @@
+:root {
+  --bg: #0b1220;
+  --glass: rgba(15, 23, 42, 0.86);
+  --line: rgba(148, 163, 184, 0.18);
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #2dd4bf;
+  --dev: #f97316;
+  --gap: #ef4444;
+  --loiter: #a855f7;
+  --sim: #fbbf24;
+  --panel-w: 380px;
+  font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+#map { position: absolute; inset: 0; }
+
+.glass {
+  position: absolute;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+.muted { color: var(--muted); font-weight: 400; }
+
+#topbar {
+  top: 16px; left: 16px; right: calc(var(--panel-w) + 32px);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px;
+}
+.brand { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+.logo { font-size: 28px; font-weight: 700; letter-spacing: 4px; color: var(--accent); }
+.sub { font-size: 15px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clock { text-align: right; font-variant-numeric: tabular-nums; }
+#clock-time { font-size: 26px; font-weight: 600; }
+#clock-date { font-size: 12px; color: var(--muted); }
+
+#panel {
+  top: 16px; right: 16px; bottom: 16px; width: var(--panel-w);
+  display: flex; flex-direction: column; gap: 14px; padding: 16px;
+}
+#panel h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
+.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.kpi { background: rgba(255, 255, 255, 0.04); border-radius: 10px; padding: 10px; text-align: center; }
+.kpi-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+#metrics { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+#metrics th, #metrics td { padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+#metrics th:first-child, #metrics td:first-child { text-align: left; }
+#metrics th { color: var(--muted); font-weight: 500; }
+#metrics tr.best td { color: var(--accent); font-weight: 600; }
+.note { font-size: 11.5px; color: var(--muted); margin: 6px 0 0; line-height: 1.5; }
+
+.alerts { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip {
+  font: inherit; font-size: 12px; color: var(--text); cursor: pointer;
+  background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+}
+.chip.on { border-color: currentColor; background: rgba(255, 255, 255, 0.06); }
+#alert-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+#alert-list li {
+  border-left: 3px solid var(--c); background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
+}
+#alert-list li:hover, #alert-list li.selected { background: rgba(255, 255, 255, 0.09); }
+#alert-list li.fresh { animation: flash 1.6s ease-out; }
+@keyframes flash { from { background: rgba(255, 255, 255, 0.22); } }
+.a-head { display: flex; justify-content: space-between; font-size: 13.5px; font-weight: 600; }
+.a-time { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.a-body { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.badge { display: inline-block; font-size: 11px; border-radius: 4px; padding: 0 5px; margin-left: 6px; font-weight: 600; }
+.badge.sim { background: var(--sim); color: #1f2937; }
+.badge.high { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+
+#legend {
+  left: 16px; bottom: 92px; padding: 10px 14px; font-size: 12.5px;
+  display: grid; gap: 5px;
+}
+.swatch { display: inline-block; width: 18px; height: 4px; border-radius: 2px; margin-right: 8px; vertical-align: middle; }
+.swatch.dot { width: 9px; height: 9px; border-radius: 50%; margin: 0 17px 0 4px; }
+.swatch.ring { width: 12px; height: 12px; border-radius: 50%; border: 2px solid; background: none; margin: 0 14px 0 2px; }
+/* 圖例的船形：與地圖上的圖示同一個輪廓 */
+.ship {
+  display: inline-block; width: 8px; height: 18px; margin: 0 13px 0 5px; vertical-align: middle;
+  clip-path: path("M4 0C6 3 7 6 7 8V17Q7 18 6 18H2Q1 18 1 17V8C1 6 2 3 4 0Z");
+}
+.ship.small { transform: scale(0.7); }
+
+/* 點選船舶的資訊卡 */
+#focus { left: 16px; top: 120px; width: 340px; padding: 12px 14px; font-size: 13px; }
+#focus.hidden { display: none; }
+.f-head { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 700; }
+.f-head button { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.f-sub { color: var(--muted); margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
+.f-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 10px; font-size: 12.5px; }
+.f-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+#focus h3 { font-size: 12.5px; font-weight: 600; margin: 0 0 6px; }
+.f-weights { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.f-weights th, .f-weights td { padding: 4px 4px; text-align: left; border-bottom: 1px solid var(--line); }
+.f-weights th { font-weight: 600; }
+.wbar { display: inline-block; width: 38px; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
+.wbar i { display: block; height: 100%; border-radius: 3px; }
+
+#controls {
+  left: 16px; right: calc(var(--panel-w) + 32px); bottom: 16px;
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: 13px;
+}
+#controls button, #controls select {
+  font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; white-space: nowrap;
+}
+#play { width: 44px; font-size: 16px; }
+#controls label { white-space: nowrap; color: var(--muted); }
+#timeline { position: relative; flex: 1; min-width: 120px; }
+#scrub { width: 100%; accent-color: var(--accent); }
+#ticks { position: absolute; left: 0; right: 0; top: -8px; height: 10px; pointer-events: none; }
+#ticks i { position: absolute; width: 2px; height: 8px; border-radius: 1px; opacity: 0.85; }
+#ticks i.sim { height: 12px; top: -4px; box-shadow: 0 0 0 1px var(--sim); }
+
+#source {
+  position: absolute; left: 16px; top: 84px; z-index: 2;
+  font-size: 12px; color: var(--muted); background: var(--glass); padding: 4px 10px; border-radius: 6px;
+}
+#hint {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 76px; z-index: 1;
+  font-size: 11.5px; color: var(--muted); opacity: 0.8; pointer-events: none;
+}
+#loading {
+  position: absolute; inset: 0; display: grid; place-items: center; z-index: 10;
+  background: var(--bg); font-size: 18px; color: var(--muted);
+}
+
+/* 錄影模式：只留地圖、時鐘與警示 */
+body.clean #controls, body.clean #hint, body.clean #legend { display: none; }
+
+@media (max-width: 900px) {
+  :root { --panel-w: 100%; }
+  #panel { top: auto; left: 16px; right: 16px; width: auto; height: 42%; bottom: 84px; }
+  #topbar { right: 16px; }
+  #controls { right: 16px; flex-wrap: wrap; }
+  #legend, #hint, .sub { display: none; }
+}

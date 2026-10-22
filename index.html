@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>海眼 SeaEye</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/deck.gl@9.0.38/dist.min.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+
+  <header id="topbar" class="glass">
+    <div class="brand">
+      <span class="logo">海眼</span>
+      <span class="sub">SeaEye · 衛星 AIS 船舶軌跡預測與異常航行預警</span>
+    </div>
+    <div class="clock">
+      <div id="clock-time">--:--</div>
+      <div id="clock-date">UTC</div>
+    </div>
+  </header>
+
+  <aside id="panel" class="glass">
+    <section class="kpis">
+      <div class="kpi"><div class="kpi-value" id="kpi-moving">0</div><div class="kpi-label">航行中船舶</div></div>
+      <div class="kpi"><div class="kpi-value" id="kpi-active">0</div><div class="kpi-label">進行中警示</div></div>
+      <div class="kpi"><div class="kpi-value" id="kpi-total">0</div><div class="kpi-label">累計警示</div></div>
+    </section>
+
+    <section>
+      <h2>預測誤差（航行中船舶，公尺）</h2>
+      <table id="metrics"></table>
+      <p class="note" id="metrics-note"></p>
+    </section>
+
+    <section class="alerts">
+      <h2>警示紀錄 <span id="alert-count" class="muted"></span></h2>
+      <div class="filters" id="filters"></div>
+      <ol id="alert-list"></ol>
+    </section>
+  </aside>
+
+  <div id="focus" class="glass hidden"></div>
+
+  <div id="legend" class="glass">
+    <div><i class="ship" style="background:#2dd4bf"></i>航行中（船頭＝航向）</div>
+    <div><i class="ship small" style="background:#64748b"></i>停泊／低速</div>
+    <div><i class="ship" style="background:#fbbf24"></i>模擬注入的船</div>
+    <div><i class="swatch dot" style="background:#38bdf8"></i>融合預測（5／15／30 分）</div>
+    <div class="muted">點選船舶：比較四種預測方法</div>
+    <div><i class="swatch ring" style="border-color:#f97316"></i>偏航</div>
+    <div><i class="swatch ring" style="border-color:#ef4444"></i>疑似關閉 AIS</div>
+    <div><i class="swatch ring" style="border-color:#a855f7"></i>異常滯留</div>
+  </div>
+
+  <footer id="controls" class="glass">
+    <button id="play" title="播放／暫停（空白鍵）">▶</button>
+    <select id="speed" title="播放速度">
+      <option value="30">30×</option>
+      <option value="60" selected>60×</option>
+      <option value="120">120×</option>
+      <option value="300">300×</option>
+      <option value="600">600×</option>
+    </select>
+    <div id="timeline">
+      <div id="ticks"></div>
+      <input type="range" id="scrub" min="0" max="86400" step="1" value="0">
+    </div>
+    <button id="prev-alert" title="上一則警示（←）">◀ 上一則</button>
+    <button id="next-alert" title="下一則警示（→）">下一則 ▶</button>
+    <label><input type="checkbox" id="show-pred" checked> 預測</label>
+    <label><input type="checkbox" id="show-idle" checked> 停泊船</label>
+  </footer>
+
+  <div id="source"></div>
+  <div id="hint">空白鍵 播放／暫停 · ← → 切換警示 · 點船比較預測、Esc 取消 · H 隱藏介面（錄影用）</div>
+  <div id="loading">載入資料中…</div>
+
+  <script src="app.js"></script>
+</body>
+</html>
