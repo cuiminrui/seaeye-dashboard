@@ -95,6 +95,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 }
 .swatch { display: inline-block; width: 18px; height: 4px; border-radius: 2px; margin-right: 8px; vertical-align: middle; }
 .swatch.dot { width: 9px; height: 9px; border-radius: 50%; margin: 0 17px 0 4px; }
+.swatch.cone {
+  width: 18px; height: 12px; border-radius: 2px 9px 9px 2px;
+  background: rgba(56, 189, 248, 0.3); border: 1px solid rgba(56, 189, 248, 0.7);
+}
 .swatch.ring { width: 12px; height: 12px; border-radius: 50%; border: 2px solid; background: none; margin: 0 14px 0 2px; }
 /* 圖例的船形：與地圖上的圖示同一個輪廓 */
 .ship {
@@ -106,6 +110,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 /* 點選船舶的資訊卡 */
 #focus { left: 16px; top: 120px; width: 340px; padding: 12px 14px; font-size: 13px; }
 #focus.hidden { display: none; }
+#focus { max-height: calc(100% - 240px); overflow-y: auto; }
+/* 點選船舶或導覽時，左下圖例會和卡片、字幕搶位置，先收起來 */
+body.has-focus #legend, body.touring #legend { display: none; }
 .f-head { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 700; }
 .f-head button { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; cursor: pointer; }
 .f-sub { color: var(--muted); margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
@@ -115,6 +122,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .f-weights { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12.5px; }
 .f-weights th, .f-weights td { padding: 4px 4px; text-align: left; border-bottom: 1px solid var(--line); }
 .f-weights th { font-weight: 600; }
+.wchart { width: 100%; height: 70px; margin-top: 4px; background: var(--raised); border-radius: 6px; display: block; }
+.wchart .grid { stroke: rgba(203, 213, 225, 0.3); stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.wchart-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: 2px 0 6px; }
+#focus h3 + .wchart, .f-weights + h3 { margin-top: 10px; }
 .wbar { display: inline-block; width: 38px; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
 .wbar i { display: block; height: 100%; border-radius: 3px; }
 
@@ -138,6 +149,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   position: absolute; left: 16px; top: 84px; z-index: 2;
   font-size: 12px; color: var(--muted); background: var(--glass); padding: 4px 10px; border-radius: 6px;
 }
+/* 導覽字幕：放在地圖下方中央，錄影時隱藏介面（H）也會保留 */
+#caption {
+  left: 16px; right: calc(var(--panel-w) + 32px); bottom: 104px; margin: 0 auto; width: fit-content;
+  max-width: calc(100% - var(--panel-w) - 48px); padding: 10px 18px;
+  font-size: 18px; font-weight: 600; line-height: 1.5; text-align: center; z-index: 3;
+}
+#caption.hidden { display: none; }
+body.clean #caption { bottom: 32px; }
+#tour.on { background: var(--accent); color: #0f172a; border-color: var(--accent); }
 #hint {
   position: absolute; left: 50%; transform: translateX(-50%); bottom: 76px; z-index: 1;
   font-size: 11.5px; color: var(--muted); opacity: 0.8; pointer-events: none;

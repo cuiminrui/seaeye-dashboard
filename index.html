@@ -50,6 +50,7 @@
     <div><i class="ship small" style="background:#64748b"></i>停泊／低速</div>
     <div><i class="ship" style="background:#fbbf24"></i>模擬注入的船</div>
     <div><i class="swatch dot" style="background:#38bdf8"></i>融合預測（5／15／30 分）</div>
+    <div><i class="swatch cone"></i>90% 不確定範圍（實測涵蓋 <span id="legend-cov">—</span>）</div>
     <div class="muted">點選船舶：比較四種預測方法</div>
     <div><i class="swatch ring" style="border-color:#f97316"></i>偏航</div>
     <div><i class="swatch ring" style="border-color:#ef4444"></i>疑似關閉 AIS</div>
@@ -69,14 +70,17 @@
       <div id="ticks"></div>
       <input type="range" id="scrub" min="0" max="86400" step="1" value="0">
     </div>
+    <button id="tour" title="自動導覽所有模擬情境（G）">▶ 導覽</button>
     <button id="prev-alert" title="上一則警示（←）">◀ 上一則</button>
     <button id="next-alert" title="下一則警示（→）">下一則 ▶</button>
     <label><input type="checkbox" id="show-pred" checked> 預測</label>
+    <label><input type="checkbox" id="show-cone" checked> 範圍</label>
     <label><input type="checkbox" id="show-idle" checked> 停泊船</label>
   </footer>
 
   <div id="source"></div>
-  <div id="hint">空白鍵 播放／暫停 · ← → 切換警示 · 點船比較預測、Esc 取消 · H 隱藏介面（錄影用）</div>
+  <div id="caption" class="glass hidden"></div>
+  <div id="hint">G 自動導覽 · 空白鍵 播放／暫停 · ← → 切換警示 · 點船比較預測、Esc 取消 · H 隱藏介面（錄影用）</div>
   <div id="loading">載入資料中…</div>
 
   <script src="app.js"></script>

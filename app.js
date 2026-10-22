@@ -29,7 +29,7 @@ const SHIP_ICON = {
 
 const $ = (id) => document.getElementById(id);
 const state = {
-  t: 0, playing: false, speed: 60, showPred: true, showIdle: true,
+  t: 0, playing: false, speed: 60, showPred: true, showIdle: true, showCone: true,
   types: new Set(Object.keys(TYPE_LABEL)), simOnly: false, selected: null, focus: null,
 };
 let D, map, overlay, t0ms, trips = { all: [], moving: [] }, alerts = [], listKey = '', lastFrame = null;
@@ -71,12 +71,42 @@ function positionAt(trip, t) {
 }
 
 function predictionAt(mmsi, t) {
+  // 融合預測各時距的位置與 90% 不確定半徑（公尺）
   const pr = D.preds[mmsi];
   if (!pr) return null;
   const i = lowerBound(pr.t, t);
   if (i < 0 || t - pr.t[i] > PRED_FRESH_S) return null;
   const n = D.meta.horizons.length;
-  return pr.p.slice(i * n, i * n + n);
+  return { pts: pr.p.slice(i * n, i * n + n), r: pr.r.slice(i * n, i * n + n) };
+}
+
+function conePolygon(origin, pts, radii) {
+  // 從船的位置沿預測點張開的扇形：每個預測點往兩側展開不確定半徑，末端接半圓
+  const kx = Math.cos((origin[1] * Math.PI) / 180) * 111320, ky = 110540;
+  const toXY = (p) => [(p[0] - origin[0]) * kx, (p[1] - origin[1]) * ky];
+  const toLL = (q) => [origin[0] + q[0] / kx, origin[1] + q[1] / ky];
+  const P = [[0, 0], ...pts.map(toXY)], R = [0, ...radii];
+  const left = [], right = [];
+  for (let i = 0; i < P.length; i++) {
+    const a = P[Math.max(0, i - 1)], b = P[Math.min(P.length - 1, i + 1)];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len;
+    left.push([P[i][0] + nx * R[i], P[i][1] + ny * R[i]]);
+    right.push([P[i][0] - nx * R[i], P[i][1] - ny * R[i]]);
+  }
+  const end = P[P.length - 1], r = R[R.length - 1], last = left[left.length - 1];
+  const a0 = Math.atan2(last[1] - end[1], last[0] - end[0]);
+  const cap = [];
+  for (let k = 1; k < 12; k++) {
+    const ang = a0 - (Math.PI * k) / 12; // 由左側順時針繞過前方到右側
+    cap.push([end[0] + r * Math.cos(ang), end[1] + r * Math.sin(ang)]);
+  }
+  return [...left, ...cap, ...right.reverse()].map(toLL);
+}
+
+function coverageText() {
+  const v = Object.values(D.meta.coverage90 || {}).map((c) => Math.round(c * 100));
+  return v.length ? `${Math.min(...v)}～${Math.max(...v)}%` : '—';
 }
 
 function fullPredictionAt(mmsi, t) {
@@ -115,15 +145,22 @@ function clock(t) {
   return d.toISOString().slice(11, 16);
 }
 
+function context(a) {
+  // 船型與位置：說明為什麼是高優先（外海的漁船、貨輪、油輪）或一般
+  const d = a.d;
+  if (!d.vessel_class) return '';
+  return `${d.vessel_class}・${d.near_port ? '港區／錨地' : '外海'}｜`;
+}
+
 function describe(a, t = state.t) {
   // 重播時只顯示「當下已知」的資訊：中斷總長與期間他船回報數，要等訊號恢復才知道
   const d = a.d;
   if (a.type === 'deviation')
-    return `偏離預期航程 ${Math.round(d.peak_ratio * 100)}%（門檻 ${Math.round(d.threshold_ratio * 100)}%），三種預測器都未預期此航向改變`;
+    return context(a) + `偏離預期航程 ${Math.round(d.peak_ratio * 100)}%（門檻 ${Math.round(d.threshold_ratio * 100)}%），三種預測器都未預期此航向改變`;
   if (a.type === 'ais_gap' && t < a.te)
-    return `訊號已中斷 ${Math.floor((t - a.ts) / 60)} 分鐘（持續中）`;
+    return context(a) + `訊號已中斷 ${Math.floor((t - a.ts) / 60)} 分鐘（持續中）`;
   if (a.type === 'ais_gap')
-    return `訊號中斷 ${Math.round(d.gap_min)} 分鐘後恢復；中斷期間附近 ${d.neighbor_reports} 筆他船回報` +
+    return context(a) + `訊號中斷 ${Math.round(d.gap_min)} 分鐘後恢復；中斷期間附近 ${d.neighbor_reports} 筆他船回報` +
       (d.likely_intentional ? '，該處有訊號涵蓋，疑似刻意關閉' : '');
   if (a.type === 'loiter') return `於「${d.zone}」低速停留 ${Math.round(d.duration_min)} 分鐘`;
   return '';
@@ -164,17 +201,20 @@ function layers() {
     }
   }
 
-  const predLines = [], predDots = [];
-  if (state.showPred) {
-    for (const v of vessels) {
-      if (!v.trip.mv || v === focusVessel) continue;
-      const pts = predictionAt(v.trip.m, t);
-      if (!pts) continue;
-      const ok = pts.map((p, k) => p && { pos: p, k }).filter(Boolean);
-      if (!ok.length) continue;
-      predLines.push({ path: [v.pos, ...ok.map((d) => d.pos)], sim: v.trip.sim });
-      predDots.push(...ok);
-    }
+  const predLines = [], predDots = [], cones = [];
+  // 拉遠時每艘船都畫扇形會糊成一片，只畫點選中的船；拉近到 9.5 級以上才全部畫
+  const conesForAll = state.showCone && map.getZoom() >= 9.5;
+  for (const v of vessels) {
+    if (!v.trip.mv) continue;
+    const pr = (state.showPred || (state.showCone && v === focusVessel)) && predictionAt(v.trip.m, t);
+    if (!pr) continue;
+    const ok = pr.pts.map((p, k) => p && pr.r[k] != null && { pos: p, k, r: pr.r[k] }).filter(Boolean);
+    if (!ok.length) continue;
+    if (state.showCone && (conesForAll || v === focusVessel))
+      cones.push({ polygon: conePolygon(v.pos, ok.map((d) => d.pos), ok.map((d) => d.r)), focus: v === focusVessel });
+    if (!state.showPred || v === focusVessel) continue;
+    predLines.push({ path: [v.pos, ...ok.map((d) => d.pos)], sim: v.trip.sim });
+    predDots.push(...ok);
   }
 
   const pulse = (Math.sin(performance.now() / 260) + 1) / 2;
@@ -190,6 +230,11 @@ function layers() {
       getPath: (d) => d.p, getTimestamps: (d) => d.t,
       getColor: (d) => (d.sim ? COLOR.sim : d.mv ? COLOR.moving : COLOR.idle),
       widthMinPixels: 2, opacity: 0.75, capRounded: true, jointRounded: true,
+    }),
+    new deck.PolygonLayer({
+      id: 'cones', data: cones, getPolygon: (d) => d.polygon,
+      getFillColor: (d) => [...COLOR.pred, d.focus ? 55 : 30],
+      getLineColor: (d) => [...COLOR.pred, d.focus ? 160 : 70], lineWidthMinPixels: 1,
     }),
     new deck.PathLayer({
       id: 'pred-lines', data: predLines, getPath: (d) => d.path,
@@ -284,7 +329,31 @@ function shipScale() {
 function setFocus(mmsi) {
   state.focus = mmsi;
   focusKey = '';
+  document.body.classList.toggle('has-focus', !!mmsi);
   if (mmsi) loadVessel(mmsi);
+}
+
+function weightChart(d, t) {
+  // 15 分鐘時距的三個預測器權重，近 2 小時的變化（船一轉彎，CTR 的權重就會升上來）
+  const n = D.meta.horizons.length, nw = D.meta.weight_methods.length;
+  const j = Math.max(0, D.meta.horizons.indexOf(15));
+  const span = 7200, i1 = lowerBound(d.t, t), i0 = Math.max(0, lowerBound(d.t, t - span));
+  if (i1 - i0 < 2) return '';
+  const W = 300, H = 70;
+  const x = (tt) => (((tt - (t - span)) / span) * W).toFixed(1);
+  const y = (w) => (H - 4 - w * (H - 8)).toFixed(1);
+  const lines = D.meta.weight_methods.map((m, q) => {
+    const pts = [];
+    for (let i = i0; i <= i1; i++) {
+      const w = d.w[(i * n + j) * nw + q];
+      if (w != null) pts.push(`${x(d.t[i])},${y(w)}`);
+    }
+    return `<polyline points="${pts.join(' ')}" fill="none" stroke="rgb(${METHOD_STYLE[m].color})" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  return `<h3>15 分鐘時距的權重變化（近 2 小時）</h3>` +
+    `<svg class="wchart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
+    `<line x1="0" x2="${W}" y1="${y(0.5)}" y2="${y(0.5)}" class="grid"/>${lines}</svg>` +
+    `<div class="wchart-axis"><span>${clock(Math.max(0, t - span))}</span><span>50%</span><span>${clock(t)}</span></div>`;
 }
 
 function updateFocusCard(v, full) {
@@ -314,7 +383,9 @@ function updateFocusCard(v, full) {
         return `<td><div class="wbar"><i style="width:${w * 100}%;background:rgb(${c})"></i></div>${Math.round(w * 100)}%</td>`;
       }).join('') + '</tr>';
     });
-    html += '</table><p class="note">藍色的融合預測＝三個預測器依上表權重加權平均，是系統最終採用的結果。偏航判定則看三者中最接近實際位置的那一個。</p>';
+    html += '</table>' + weightChart(vesselCache.get(state.focus), state.t);
+    html += '<p class="note">藍色的融合預測＝三個預測器依上表權重加權平均，是系統最終採用的結果。' +
+      `淡藍扇形是依這艘船過去誤差估計的 90% 範圍（實測涵蓋率 ${coverageText()}）。偏航判定則看三者中最接近實際位置的那一個。</p>`;
   } else if (v) {
     html += `<p class="note">${full === null ? '此刻沒有預測：航速低於 3 節，或剛開始回報、尚未累積足夠資料。' : '載入預測中…'}</p>`;
   }
@@ -446,10 +517,69 @@ function step(dir) {
   select(list[i]);
 }
 
+// ---------- 自動導覽（錄影用）：依序播放每則模擬事件，自動調速並打上字幕 ----------
+
+const tour = { on: false, list: [], idx: -1 };
+
+function tourEnd(a) {
+  // 偏航：判定後再播 10 分鐘；訊號中斷：等到船恢復訊號、卡片顯示完整資訊後再 5 分鐘
+  return a.type === 'ais_gap' ? Math.max(a.td + 600, a.te + 300) : a.td + 600;
+}
+
+function startTour() {
+  state.simOnly = true;
+  state.types = new Set(Object.keys(TYPE_LABEL));
+  refresh();
+  tour.list = visibleAlerts();
+  tour.idx = -1;
+  tour.on = tour.list.length > 0;
+  $('tour').classList.toggle('on', tour.on);
+  nextTourStop();
+}
+
+function stopTour() {
+  tour.on = false;
+  $('tour').classList.remove('on');
+  setCaption('');
+}
+
+function nextTourStop() {
+  tour.idx += 1;
+  if (tour.idx >= tour.list.length) { stopTour(); setPlaying(false); return; }
+  const a = tour.list[tour.idx];
+  state.speed = a.type === 'ais_gap' ? 300 : 60; // 訊號中斷要等滿 60 分鐘，加快播放
+  $('speed').value = String(state.speed);
+  select(a);
+}
+
+function tourCaption(a, t) {
+  const head = `模擬情境 ${tour.idx + 1}／${tour.list.length}｜MMSI ${a.m}（${a.d.vessel_class ?? '船舶'}）`;
+  if (t < a.ts) return `${head}：正常航行中。藍線與扇形是系統對 5／15／30 分鐘後位置的預測`;
+  if (a.type === 'deviation') {
+    if (t < a.td) return `${head}：船突然轉向，實際位置開始偏離所有預測器的預期`;
+    return `${head}：判定「偏航」——${describe(a, t)}`;
+  }
+  if (t < a.td) return `${head}：AIS 訊號消失，系統開始計時（已 ${Math.floor((t - a.ts) / 60)} 分鐘，滿 60 分鐘判定）`;
+  if (t < a.te) return `${head}：中斷滿 60 分鐘，發出「疑似關閉 AIS」警示`;
+  return `${head}：船恢復訊號——${describe(a, t)}`;
+}
+
+function setCaption(text) {
+  const el = $('caption');
+  if (el.textContent !== text) el.textContent = text;
+  el.classList.toggle('hidden', !text);
+  document.body.classList.toggle('touring', !!text);
+}
+
 function frame(now) {
   if (lastFrame !== null && state.playing) {
     setTime(state.t + ((now - lastFrame) / 1000) * state.speed);
     if (state.t >= D.meta.duration) setPlaying(false);
+  }
+  if (tour.on) {
+    const a = tour.list[tour.idx];
+    setCaption(tourCaption(a, state.t));
+    if (state.t >= tourEnd(a)) nextTourStop();
   }
   lastFrame = now;
   overlay.setProps({ layers: layers() });
@@ -471,18 +601,21 @@ function bindControls() {
   $('play').onclick = () => setPlaying(!state.playing);
   $('speed').onchange = (e) => { state.speed = Number(e.target.value); };
   $('scrub').oninput = (e) => setTime(Number(e.target.value));
-  $('prev-alert').onclick = () => step(-1);
-  $('next-alert').onclick = () => step(1);
+  $('prev-alert').onclick = () => { stopTour(); step(-1); };
+  $('next-alert').onclick = () => { stopTour(); step(1); };
+  $('tour').onclick = () => (tour.on ? stopTour() : startTour());
   $('show-pred').onchange = (e) => { state.showPred = e.target.checked; };
   $('show-idle').onchange = (e) => { state.showIdle = e.target.checked; };
+  $('show-cone').onchange = (e) => { state.showCone = e.target.checked; };
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.code === 'Space') { e.preventDefault(); setPlaying(!state.playing); }
-    else if (e.code === 'ArrowRight') step(1);
-    else if (e.code === 'ArrowLeft') step(-1);
+    else if (e.code === 'ArrowRight') { stopTour(); step(1); }
+    else if (e.code === 'ArrowLeft') { stopTour(); step(-1); }
+    else if (e.code === 'KeyG') (tour.on ? stopTour() : startTour());
     else if (e.code === 'KeyH') document.body.classList.toggle('clean');
     else if (e.code === 'KeyP') { state.showPred = !state.showPred; $('show-pred').checked = state.showPred; }
-    else if (e.code === 'Escape') setFocus(null);
+    else if (e.code === 'Escape') { stopTour(); setFocus(null); }
   });
 }
 
@@ -500,6 +633,7 @@ async function main() {
   $('scrub').max = D.meta.duration;
   $('clock-date').textContent = D.meta.t0.slice(0, 10) + ' · UTC';
   $('source').textContent = '資料：' + D.meta.source;
+  $('legend-cov').textContent = coverageText();
 
   // deck.gl 9 的 DeckGL 不會自動建立底圖，改由 MapLibre 建地圖、deck.gl 疊在上面
   map = new maplibregl.Map({
