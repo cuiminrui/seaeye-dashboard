@@ -374,12 +374,13 @@ function renderAlertList(force) {
   shown.forEach((a, i) => {
     const li = document.createElement('li');
     li.style.setProperty('--c', `rgb(${COLOR[a.type]})`);
+    li.classList.add(a.sev === 'high' ? 'high' : 'normal');
     if (a === state.selected) li.classList.add('selected');
     if (!force && i < shown.length - prevCount) li.classList.add('fresh');
     li.innerHTML =
       `<div class="a-head"><span>${TYPE_LABEL[a.type]}` +
       (a.sim ? '<span class="badge sim">模擬情境</span>' : '') +
-      (a.sev === 'high' ? '<span class="badge high">高優先</span>' : '') +
+      (a.sev === 'high' ? '<span class="badge high">高優先</span>' : '<span class="badge normal">一般</span>') +
       `</span><span class="a-time">${clock(a.td)}</span></div>` +
       `<div class="a-body">MMSI ${a.m} · ${describe(a)}</div>`;
     li.onclick = () => select(a);
