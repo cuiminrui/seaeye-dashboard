@@ -9,7 +9,11 @@ const ACTIVE_S = 3600;       // 警示發出後 1 小時內在地圖上標示
 const TRAIL_S = 1800;        // 航跡尾巴長度 30 分鐘
 const PRED_FRESH_S = 180;    // 預測發布超過 3 分鐘就不顯示，避免拿舊預測接到現在位置
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'; // 投影機用淺色
 const CJK_FONT = '"Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
+const VERIFY_H = 15; // 「預測 vs. 實際」對照用的時距（分鐘）
+const WELCOME_KEY = 'seaeye-welcome-seen';
+const THEME_KEY = 'seaeye-theme';
 
 // 點選船舶時比較的四種預測：融合是系統最終輸出，其餘三個是它的組成
 const METHOD_STYLE = {
@@ -35,6 +39,60 @@ const state = {
 let D, map, overlay, t0ms, trips = { all: [], moving: [] }, alerts = [], listKey = '', lastFrame = null;
 const vesselCache = new Map(); // MMSI → 完整預測（undefined：未載入、'loading'、null：沒有資料）
 let focusKey = '';
+
+// ---------- 主題與瀏覽器儲存 ----------
+
+function isLight() {
+  return document.body.classList.contains('light');
+}
+
+function ui() {
+  // 地圖上文字標籤與幾個淺色元素，在淺色主題要換成深色才看得到
+  return isLight()
+    ? { key: 'l', labelBg: [255, 255, 255, 235], text: [15, 23, 42], cv: [71, 85, 105], sim: [217, 119, 6] }
+    : { key: 'd', labelBg: [11, 18, 32, 220], text: [226, 232, 240], cv: [226, 232, 240], sim: COLOR.sim };
+}
+
+function methodColor(m) {
+  return m === 'cv' ? ui().cv : METHOD_STYLE[m].color;
+}
+
+function storeGet(key) {
+  // 無痕視窗或封鎖網站資料時 localStorage 會丟例外，當作沒有存過
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function storeSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* 存不了就算了，只是下次再顯示一次 */ }
+}
+
+// ---------- 船舶資料 ----------
+
+function vinfo(m) {
+  const v = D.vessels?.[m];
+  return { name: v?.[0] || null, cls: v?.[1] || null, len: v?.[2] || null };
+}
+
+function esc(s) {
+  // 船名來自資料檔，放進 HTML 前先跳脫
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function vesselName(m) {
+  return vinfo(m).name || `MMSI ${m}`;
+}
+
+function vesselDesc(m) {
+  const v = vinfo(m);
+  return [v.cls, v.len ? `${v.len} 公尺` : null].filter(Boolean).join('・');
+}
+
+function distanceM(p, q) {
+  const r = Math.PI / 180, R = 6371000;
+  const a = Math.sin(((q[1] - p[1]) * r) / 2) ** 2 +
+    Math.cos(p[1] * r) * Math.cos(q[1] * r) * Math.sin(((q[0] - p[0]) * r) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
 
 // ---------- 資料查詢 ----------
 
@@ -104,6 +162,20 @@ function conePolygon(origin, pts, radii) {
   return [...left, ...cap, ...right.reverse()].map(toLL);
 }
 
+function verification(trip, t) {
+  // 15 分鐘前發布的融合預測，與船在預測目標時刻的實際位置對照（只用已經發生的事）
+  const pr = D.preds[trip.m];
+  const j = D.meta.horizons.indexOf(VERIFY_H);
+  if (!pr || j < 0) return null;
+  const n = D.meta.horizons.length, h = VERIFY_H * 60;
+  const i = lowerBound(pr.t, t - h);
+  if (i < 0 || t - h - pr.t[i] > 120) return null;
+  const predicted = pr.p[i * n + j];
+  const actual = predicted && positionAt(trip, pr.t[i] + h);
+  if (!actual) return null;
+  return { predicted, actual: actual.pos, error: distanceM(predicted, actual.pos), issued: pr.t[i] };
+}
+
 function coverageText() {
   const v = Object.values(D.meta.coverage90 || {}).map((c) => Math.round(c * 100));
   return v.length ? `${Math.min(...v)}～${Math.max(...v)}%` : '—';
@@ -127,7 +199,7 @@ async function loadVessel(mmsi) {
   if (vesselCache.has(mmsi)) return;
   vesselCache.set(mmsi, 'loading');
   try {
-    const r = await fetch(`vessels/${mmsi}.json`, { cache: 'no-store' });
+    const r = await fetch(`vessels/${mmsi}.json`, { cache: 'no-cache' }); // 有更新才重新下載
     vesselCache.set(mmsi, r.ok ? await r.json() : null); // 停泊船沒有預測檔
   } catch {
     vesselCache.set(mmsi, null);
@@ -189,7 +261,9 @@ function layers() {
   // 點選中的船：畫四種方法的預測，並更新資訊卡
   const focusVessel = state.focus ? vessels.find((v) => v.trip.m === state.focus) : null;
   const full = focusVessel ? fullPredictionAt(state.focus, t) : null;
-  updateFocusCard(focusVessel, full);
+  const verify = focusVessel && focusVessel.trip.mv ? verification(focusVessel.trip, t) : null;
+  updateFocusCard(focusVessel, full, verify);
+  const theme = ui();
   const methodLines = [], methodDots = [], methodLabels = [];
   if (focusVessel && full && full !== 'loading') {
     for (const { m, pts } of full.pts) {
@@ -221,15 +295,16 @@ function layers() {
   const active = visibleAlerts().filter((a) => a.td <= t && t <= a.td + ACTIVE_S);
   const simLabels = active.filter((a) => a.sim);
   const s = state.selected;
-  const sel = s && s.td <= t ? [s] : [];
+  const sel = s && s.td <= t && t <= s.td + ACTIVE_S ? [s] : []; // 和警示圈一樣只標 1 小時
   const pending = s && s.ts <= t && t < s.td ? [s] : [];
 
   return [
     new deck.TripsLayer({
       id: 'trails', data: tripData, currentTime: t, trailLength: TRAIL_S, fadeTrail: true,
       getPath: (d) => d.p, getTimestamps: (d) => d.t,
-      getColor: (d) => (d.sim ? COLOR.sim : d.mv ? COLOR.moving : COLOR.idle),
+      getColor: (d) => (d.sim ? theme.sim : d.mv ? COLOR.moving : COLOR.idle),
       widthMinPixels: 2, opacity: 0.75, capRounded: true, jointRounded: true,
+      updateTriggers: { getColor: theme.key },
     }),
     new deck.PolygonLayer({
       id: 'cones', data: cones, getPolygon: (d) => d.polygon,
@@ -246,13 +321,32 @@ function layers() {
     }),
     new deck.PathLayer({
       id: 'method-lines', data: methodLines, getPath: (d) => d.path,
-      getColor: (d) => [...METHOD_STYLE[d.m].color, d.m === 'fused' ? 255 : 200],
+      getColor: (d) => [...methodColor(d.m), d.m === 'fused' ? 255 : 200],
       getWidth: (d) => METHOD_STYLE[d.m].width, widthUnits: 'pixels', jointRounded: true,
+      updateTriggers: { getColor: theme.key },
     }),
     new deck.ScatterplotLayer({
       id: 'method-dots', data: methodDots, getPosition: (d) => d.pos,
       getRadius: (d) => (d.m === 'fused' ? 5 : 3.5) - d.k * 0.5, radiusUnits: 'pixels',
-      getFillColor: (d) => METHOD_STYLE[d.m].color,
+      getFillColor: (d) => methodColor(d.m), updateTriggers: { getFillColor: theme.key },
+    }),
+    // 預測 vs. 實際：15 分鐘前的預測點（空心圈）連到船當時的實際位置
+    new deck.LineLayer({
+      id: 'verify-line', data: verify ? [verify] : [], getSourcePosition: (d) => d.predicted,
+      getTargetPosition: (d) => d.actual, getColor: [...theme.text, 220], getWidth: 2, widthUnits: 'pixels',
+      updateTriggers: { getColor: theme.key },
+    }),
+    new deck.ScatterplotLayer({
+      id: 'verify-point', data: verify ? [verify] : [], getPosition: (d) => d.predicted,
+      getRadius: 7, radiusUnits: 'pixels', stroked: true, filled: false,
+      getLineColor: [...theme.text, 240], lineWidthMinPixels: 2, updateTriggers: { getLineColor: theme.key },
+    }),
+    new deck.TextLayer({
+      id: 'verify-label', data: verify ? [verify] : [], getPosition: (d) => d.predicted,
+      getText: (d) => `${VERIFY_H} 分鐘前的預測｜誤差 ${Math.round(d.error)} 公尺`,
+      getColor: theme.text, getSize: 12, getPixelOffset: [0, 20], fontFamily: CJK_FONT, fontWeight: 600,
+      characterSet: 'auto', background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [5, 2],
+      updateTriggers: { getText: verify && Math.round(verify.error), getColor: theme.key, getBackgroundColor: theme.key },
     }),
     // 船身外框：同一個圖示放大一點、塗深色，墊在底下
     new deck.IconLayer({
@@ -264,21 +358,23 @@ function layers() {
       id: 'vessels', data: vessels, pickable: true, iconAtlas: SHIP_ICON.atlas, iconMapping: SHIP_ICON.mapping,
       getIcon: () => 'ship', getPosition: (d) => d.pos, getAngle: (d) => -d.heading,
       getSize: (d) => (d.trip.mv ? 26 : 16), sizeScale: shipScale(),
-      getColor: (d) => (d.trip.sim ? COLOR.sim : d.trip.mv ? COLOR.moving : COLOR.idle),
+      getColor: (d) => (d.trip.sim ? theme.sim : d.trip.mv ? COLOR.moving : COLOR.idle),
+      updateTriggers: { getColor: theme.key },
     }),
     new deck.ScatterplotLayer({
       id: 'focus-ring', data: focusVessel ? [focusVessel] : [], getPosition: (d) => d.pos,
       getRadius: 22, radiusUnits: 'pixels', stroked: true, filled: false,
-      getLineColor: [255, 255, 255, 220], lineWidthMinPixels: 2,
+      getLineColor: [...theme.text, 220], lineWidthMinPixels: 2, updateTriggers: { getLineColor: theme.key },
     }),
     // 四條線的終點常常很接近，標籤依方法順序上下錯開，避免疊在一起
     new deck.TextLayer({
       id: 'method-labels', data: methodLabels, getPosition: (d) => d.pos,
-      getText: (d) => METHOD_STYLE[d.m].label, getColor: (d) => METHOD_STYLE[d.m].color, getSize: 13,
+      getText: (d) => METHOD_STYLE[d.m].label, getColor: (d) => methodColor(d.m), getSize: 13,
       getTextAnchor: 'start', getAlignmentBaseline: 'center',
       getPixelOffset: (d) => [12, (D.meta.methods.indexOf(d.m) - 1.5) * 18],
       fontFamily: CJK_FONT, fontWeight: 700, characterSet: 'auto',
-      background: true, getBackgroundColor: [11, 18, 32, 200], backgroundPadding: [4, 2],
+      background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [4, 2],
+      updateTriggers: { getColor: theme.key, getBackgroundColor: theme.key },
     }),
     new deck.ScatterplotLayer({
       id: 'alert-rings', data: active, pickable: true, getPosition: (d) => [d.lon, d.lat],
@@ -295,18 +391,19 @@ function layers() {
     }),
     new deck.TextLayer({
       id: 'pending-label', data: pending, getPosition: (d) => [d.lon, d.lat],
-      getText: (d) => pendingText(d, t), getColor: [226, 232, 240], getSize: 14,
+      getText: (d) => pendingText(d, t), getColor: theme.text, getSize: 14,
       getPixelOffset: [0, 38], fontFamily: CJK_FONT, fontWeight: 600, characterSet: 'auto',
-      background: true, getBackgroundColor: [11, 18, 32, 220], backgroundPadding: [6, 3],
-      updateTriggers: { getText: Math.floor(t / 60) },
+      background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [6, 3],
+      updateTriggers: { getText: Math.floor(t / 60), getColor: theme.key, getBackgroundColor: theme.key },
     }),
     new deck.TextLayer({
       id: 'alert-labels', data: [...new Set([...simLabels, ...sel])],
       getPosition: (d) => [d.lon, d.lat],
       getText: (d) => (d.sim ? `模擬情境｜${TYPE_LABEL[d.type]}` : TYPE_LABEL[d.type]),
-      getColor: (d) => (d.sim ? COLOR.sim : COLOR[d.type]), getSize: 15,
+      getColor: (d) => (d.sim ? theme.sim : COLOR[d.type]), getSize: 15,
       getPixelOffset: [0, -34], fontFamily: CJK_FONT, fontWeight: 700, characterSet: 'auto',
-      background: true, getBackgroundColor: [11, 18, 32, 220], backgroundPadding: [6, 3],
+      background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [6, 3],
+      updateTriggers: { getColor: theme.key, getBackgroundColor: theme.key },
     }),
   ];
 }
@@ -348,7 +445,7 @@ function weightChart(d, t) {
       const w = d.w[(i * n + j) * nw + q];
       if (w != null) pts.push(`${x(d.t[i])},${y(w)}`);
     }
-    return `<polyline points="${pts.join(' ')}" fill="none" stroke="rgb(${METHOD_STYLE[m].color})" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
+    return `<polyline points="${pts.join(' ')}" fill="none" stroke="rgb(${methodColor(m)})" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
   }).join('');
   return `<h3>15 分鐘時距的權重變化（近 2 小時）</h3>` +
     `<svg class="wchart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
@@ -356,30 +453,34 @@ function weightChart(d, t) {
     `<div class="wchart-axis"><span>${clock(Math.max(0, t - span))}</span><span>50%</span><span>${clock(t)}</span></div>`;
 }
 
-function updateFocusCard(v, full) {
+function updateFocusCard(v, full, verify) {
   const card = $('focus');
   if (!state.focus) { card.classList.add('hidden'); focusKey = ''; return; }
   const status = full === undefined || full === 'loading' ? 'l' : full ? full.idx : 'n';
-  const key = `${state.focus}|${v ? 1 : 0}|${status}|${Math.floor(state.t / 15)}`;
+  const key = `${state.focus}|${v ? 1 : 0}|${status}|${Math.floor(state.t / 15)}|${ui().key}`;
   if (key === focusKey) return;
   focusKey = key;
   card.classList.remove('hidden');
 
   const trip = trips.all.find((d) => d.m === state.focus);
-  let html = `<div class="f-head"><span>MMSI ${state.focus}` +
+  const desc = vesselDesc(state.focus);
+  let html = `<div class="f-head"><span>${esc(vesselName(state.focus))}` +
     (trip && trip.sim ? '<span class="badge sim">模擬注入</span>' : '') +
     '</span><button id="f-close" title="關閉（Esc）">✕</button></div>';
+  html += `<div class="f-sub">${desc ? esc(desc) + ' · ' : ''}MMSI ${state.focus}</div>`;
   html += `<div class="f-sub">${v ? `航速 ${v.sog ?? '—'} 節 · 航向 ${Math.round(v.heading)}°` : '此刻沒有回報（尚未出現或已離開）'}</div>`;
+  if (verify)
+    html += `<div class="f-verify">${VERIFY_H} 分鐘前的預測，與船實際到達位置相差 <b>${Math.round(verify.error)} 公尺</b>（地圖上的空心圈與連線）</div>`;
 
   if (v && full && full !== 'loading') {
     html += '<div class="f-legend">' + D.meta.methods.map((m) =>
-      `<span><i style="background:rgb(${METHOD_STYLE[m].color})"></i>${METHOD_STYLE[m].name}</span>`).join('') + '</div>';
+      `<span><i style="background:rgb(${methodColor(m)})"></i>${METHOD_STYLE[m].name}</span>`).join('') + '</div>';
     html += '<h3>Hedge 權重（依各預測器最近的誤差即時調整）</h3><table class="f-weights"><tr><th>時距</th>' +
-      D.meta.weight_methods.map((m) => `<th style="color:rgb(${METHOD_STYLE[m].color})">${METHOD_STYLE[m].label}</th>`).join('') + '</tr>';
+      D.meta.weight_methods.map((m) => `<th style="color:rgb(${methodColor(m)})">${METHOD_STYLE[m].label}</th>`).join('') + '</tr>';
     D.meta.horizons.forEach((h, j) => {
       html += `<tr><td>${h} 分</td>` + full.w[j].map((w, q) => {
         if (w == null) return '<td class="muted">—</td>';
-        const c = METHOD_STYLE[D.meta.weight_methods[q]].color;
+        const c = methodColor(D.meta.weight_methods[q]);
         return `<td><div class="wbar"><i style="width:${w * 100}%;background:rgb(${c})"></i></div>${Math.round(w * 100)}%</td>`;
       }).join('') + '</tr>';
     });
@@ -390,7 +491,7 @@ function updateFocusCard(v, full) {
     html += `<p class="note">${full === null ? '此刻沒有預測：航速低於 3 節，或剛開始回報、尚未累積足夠資料。' : '載入預測中…'}</p>`;
   }
   card.innerHTML = html;
-  $('f-close').onclick = () => setFocus(null);
+  $('f-close').onclick = () => { state.selected = null; setFocus(null); updateUrl(); };
 }
 
 function renderMetrics() {
@@ -405,6 +506,13 @@ function renderMetrics() {
   const info = D.metrics.info;
   const cv = rows.find((r) => r['方法'].includes('CV')), fu = rows.find((r) => r.ADE === best);
   const gain = cv && fu ? ((1 - fu.ADE / cv.ADE) * 100).toFixed(1) : null;
+  // 預設顯示長條圖（一眼看出融合最短），點「看完整表格」切換
+  const maxAde = Math.max(...rows.map((r) => r.ADE));
+  $('metric-bars').innerHTML = rows.map((r) =>
+    `<div class="mbar${r.ADE === best ? ' best' : ''}"><span>${r['方法']}</span>` +
+    `<div class="mtrack"><i style="width:${((r.ADE / maxAde) * 100).toFixed(1)}%"></i></div>` +
+    `<em>${Math.round(r.ADE).toLocaleString('en-US')}</em></div>`).join('') +
+    `<div class="mbar-caption">ADE：5／15／30 分鐘三個時距的平均位移誤差（公尺），越短越好</div>`;
   $('metrics-note').textContent =
     `${info.vessels} 艘船、${info.paired_issue_points.toLocaleString()} 個配對發布點（未注入模擬異常）` +
     (gain ? `；融合模型 ADE 較常速度低 ${gain}%` : '');
@@ -453,16 +561,34 @@ function renderAlertList(force) {
       (a.sim ? '<span class="badge sim">模擬情境</span>' : '') +
       (a.sev === 'high' ? '<span class="badge high">高優先</span>' : '<span class="badge normal">一般</span>') +
       `</span><span class="a-time">${clock(a.td)}</span></div>` +
-      `<div class="a-body">MMSI ${a.m} · ${describe(a)}</div>`;
+      `<div class="a-body"><b>${esc(vesselName(a.m))}</b> · ${esc(describe(a))}</div>`;
     li.onclick = () => select(a);
     ol.appendChild(li);
   });
 }
 
 function renderTicks() {
-  const dur = D.meta.duration;
-  $('ticks').innerHTML = visibleAlerts().map((a) =>
-    `<i class="${a.sim ? 'sim' : ''}" style="left:${(a.td / dur) * 100}%;background:rgb(${COLOR[a.type]})"></i>`).join('');
+  // 時間軸上方的警示直方圖：每 30 分鐘一格、依類型堆疊；琥珀色細線是模擬事件
+  const dur = D.meta.duration, bin = 1800, nb = Math.ceil(dur / bin), H = 20;
+  const types = Object.keys(TYPE_LABEL), vis = visibleAlerts();
+  const counts = types.map(() => new Array(nb).fill(0));
+  for (const a of vis) counts[types.indexOf(a.type)][Math.min(nb - 1, Math.floor(a.td / bin))] += 1;
+  const totals = counts[0].map((_, i) => counts.reduce((s, c) => s + c[i], 0));
+  const max = Math.max(1, ...totals);
+  let svg = '';
+  for (let i = 0; i < nb; i++) {
+    let y = H;
+    types.forEach((ty, k) => {
+      const h = (counts[k][i] / max) * (H - 2);
+      if (!h) return;
+      y -= h;
+      svg += `<rect x="${(i / nb) * 1000 + 1}" y="${y.toFixed(1)}" width="${(1000 / nb - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="rgb(${COLOR[ty]})" opacity="0.85"/>`;
+    });
+  }
+  svg += vis.filter((a) => a.sim).map((a) =>
+    `<rect x="${((a.td / dur) * 1000 - 1.5).toFixed(1)}" y="0" width="3" height="${H}" fill="var(--sim)"/>`).join('');
+  $('ticks').innerHTML = `<svg viewBox="0 0 1000 ${H}" preserveAspectRatio="none">${svg}</svg>`;
+  $('ticks').title = `警示數量（每 30 分鐘，共 ${vis.length} 則）；琥珀色細線＝模擬情境`;
 }
 
 function refresh() {
@@ -486,10 +612,12 @@ function viewPadding() {
   // 右側面板、左上的船舶卡片與上下列會擋住地圖，置中時要扣掉
   // （卡片剛點選時可能還沒顯示、量不到寬度，所以用 CSS 設定的固定寬度 340）
   const wide = window.innerWidth > 900;
+  if (!wide) // 手機：上方有標題列與船舶卡片，下方有播放列
+    return { top: state.focus ? 300 : 80, bottom: 140, left: 12, right: 12 };
   return {
     top: 90, bottom: 80,
-    left: wide && state.focus ? 340 + 32 : 16,
-    right: wide ? $('panel').offsetWidth + 32 : 16,
+    left: state.focus ? 340 + 32 : 16,
+    right: $('panel').offsetWidth + 32,
   };
 }
 
@@ -505,6 +633,7 @@ function select(a) {
   flyTo(a.lon, a.lat, 11.5); // 拉近到能看清四條預測線分岔
   setPlaying(true);
   renderAlertList(true);
+  updateUrl();
 }
 
 function step(dir) {
@@ -515,6 +644,164 @@ function step(dir) {
   if (cur >= 0) i = (cur + dir + list.length) % list.length;
   else i = dir > 0 ? Math.max(0, list.findIndex((a) => a.td > state.t)) : list.length - 1;
   select(list[i]);
+}
+
+// ---------- 搜尋船舶 ----------
+
+let tripMmsi = new Set(); // 有航跡可顯示的船（太短的航段在分析時已剔除）
+
+function searchVessels(q) {
+  q = q.trim().toUpperCase();
+  if (!q) return [];
+  const out = [];
+  for (const [m, v] of Object.entries(D.vessels || {})) {
+    if (!tripMmsi.has(Number(m))) continue;
+    if (m.startsWith(q) || (v[0] && v[0].toUpperCase().includes(q))) out.push(Number(m));
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function renderSearch() {
+  const box = $('search-results'), q = $('search').value.trim();
+  const hits = searchVessels(q);
+  box.innerHTML = hits.map((m) =>
+    `<li data-m="${m}"><b>${esc(vesselName(m))}</b><span>${esc(vesselDesc(m) || '船型不明')} · ${m}</span></li>`).join('') ||
+    (q ? '<li class="empty">找不到符合的船</li>' : '');
+  box.classList.toggle('hidden', !q);
+  box.querySelectorAll('li[data-m]').forEach((li) => (li.onclick = () => goVessel(Number(li.dataset.m))));
+}
+
+function goVessel(m) {
+  // 船此刻有回報就直接飛過去；沒有的話，跳到它第一次出現的時間
+  $('search').value = '';
+  $('search-results').classList.add('hidden');
+  stopTour();
+  state.selected = null;
+  const vt = trips.all.filter((d) => d.m === m);
+  if (!vt.length) return;
+  let trip = vt.find((d) => d.t[0] <= state.t && state.t <= d.t[d.t.length - 1]);
+  if (!trip) { trip = vt[0]; setTime(trip.t[0] + 60); }
+  setFocus(m);
+  const at = positionAt(trip, state.t);
+  if (at) flyTo(at.pos[0], at.pos[1], 11);
+  renderAlertList(true);
+  updateUrl();
+}
+
+// ---------- 網址參數（直接連到某則事件或某艘船） ----------
+
+function simList() {
+  return alerts.filter((a) => a.sim); // 已依判定時間排序
+}
+
+function linkParams() {
+  const p = new URLSearchParams(), s = state.selected;
+  if (s && s.sim) p.set('event', simList().indexOf(s) + 1);
+  else if (state.focus) { p.set('mmsi', state.focus); p.set('t', clock(state.t)); }
+  return p;
+}
+
+function updateUrl() {
+  const qs = linkParams().toString();
+  history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
+}
+
+async function copyLink() {
+  const p = linkParams();
+  p.set('t', clock(state.t)); // 分享出去的連結停在同一個時間點，對方看到的就是同一個畫面
+  const url = `${location.origin}${location.pathname}?${p}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('已複製連結：' + url);
+  } catch {
+    window.prompt('複製這個連結：', url);
+  }
+}
+
+function applyUrl() {
+  // 回傳是否有指定事件或船舶（有的話就不顯示歡迎畫面）
+  const p = new URLSearchParams(location.search);
+  const t = p.get('t');
+  const applyTime = () => {
+    if (!t || !/^\d{1,2}:\d{2}$/.test(t)) return false;
+    const [h, mi] = t.split(':').map(Number);
+    setTime(h * 3600 + mi * 60 - ((t0ms / 1000) % 86400));
+    return true;
+  };
+  const ev = Number(p.get('event'));
+  if (ev && simList()[ev - 1]) {
+    state.simOnly = true;
+    refresh();
+    select(simList()[ev - 1]);
+    // 同時給了時間：停在事件的那一刻（分享特定畫面用）
+    if (applyTime()) setPlaying(false);
+    return true;
+  }
+  applyTime();
+  const m = Number(p.get('mmsi'));
+  if (m && tripMmsi.has(m)) { goVessel(m); return true; }
+  return !!t;
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+// ---------- 歡迎畫面、主題、手機面板 ----------
+
+function showWelcome(show) {
+  $('welcome').classList.toggle('hidden', !show);
+}
+
+function closeWelcome(thenTour) {
+  storeSet(WELCOME_KEY, '1');
+  showWelcome(false);
+  if (thenTour) startTour();
+}
+
+function setTheme(light, persist = true) {
+  document.body.classList.toggle('light', light);
+  if (persist) storeSet(THEME_KEY, light ? 'light' : 'dark');
+  if (map) map.setStyle(light ? LIGHT_STYLE : MAP_STYLE);
+  $('theme').textContent = light ? '☾ 深色' : '☀ 淺色';
+  focusKey = '';
+}
+
+// ---------- 載入資料（顯示進度） ----------
+
+async function fetchJsonWithProgress(url, onProgress) {
+  // no-cache：每次向伺服器確認，沒更新就用瀏覽器裡的副本，不必重新下載 10 MB
+  const r = await fetch(url, { cache: 'no-cache' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  // 伺服器有壓縮時，Content-Length 是壓縮後的大小，和讀到的位元組數對不起來，就只顯示已載入量
+  const total = r.headers.get('Content-Encoding') ? 0 : Number(r.headers.get('Content-Length')) || 0;
+  if (!r.body || !r.body.getReader) return r.json();
+  const reader = r.body.getReader(), chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    onProgress(got, total);
+  }
+  const buf = new Uint8Array(got);
+  let o = 0;
+  for (const c of chunks) { buf.set(c, o); o += c.length; }
+  return JSON.parse(new TextDecoder().decode(buf));
+}
+
+function showProgress(got, total) {
+  const mb = (got / 1048576).toFixed(1);
+  $('loading-text').textContent = total ? `載入資料中… ${mb}／${(total / 1048576).toFixed(1)} MB` : `載入資料中… ${mb} MB`;
+  $('loading-bar').style.width = total ? `${Math.min(100, (got / total) * 100)}%` : '100%';
+  $('loading-bar').classList.toggle('indeterminate', !total);
 }
 
 // ---------- 自動導覽（錄影用）：依序播放每則模擬事件，自動調速並打上字幕 ----------
@@ -553,7 +840,7 @@ function nextTourStop() {
 }
 
 function tourCaption(a, t) {
-  const head = `模擬情境 ${tour.idx + 1}／${tour.list.length}｜MMSI ${a.m}（${a.d.vessel_class ?? '船舶'}）`;
+  const head = `模擬情境 ${tour.idx + 1}／${tour.list.length}｜${vesselName(a.m)}（${vesselDesc(a.m) || a.d.vessel_class || '船舶'}）`;
   if (t < a.ts) return `${head}：正常航行中。藍線與扇形是系統對 5／15／30 分鐘後位置的預測`;
   if (a.type === 'deviation') {
     if (t < a.td) return `${head}：船突然轉向，實際位置開始偏離所有預測器的預期`;
@@ -589,11 +876,13 @@ function frame(now) {
 
 function tooltip({ object, layer }) {
   if (!object) return null;
-  if (layer.id === 'vessels')
-    return { text: `MMSI ${object.trip.m}\n航速 ${object.sog ?? '—'} 節` + (object.trip.sim ? '\n（模擬注入）' : '') +
-      (object.trip.mv ? '\n點一下比較四種預測' : '') };
+  if (layer.id === 'vessels') {
+    const m = object.trip.m, desc = vesselDesc(m);
+    return { text: `${vesselName(m)}\n${desc ? desc + '\n' : ''}航速 ${object.sog ?? '—'} 節` +
+      (object.trip.sim ? '\n（模擬注入）' : '') + (object.trip.mv ? '\n點一下比較四種預測' : '') };
+  }
   if (layer.id === 'alert-rings')
-    return { text: `${TYPE_LABEL[object.type]}${object.sim ? '（模擬情境）' : ''}\nMMSI ${object.m}\n${describe(object)}` };
+    return { text: `${TYPE_LABEL[object.type]}${object.sim ? '（模擬情境）' : ''}\n${vesselName(object.m)}\n${describe(object)}` };
   return null;
 }
 
@@ -607,46 +896,74 @@ function bindControls() {
   $('show-pred').onchange = (e) => { state.showPred = e.target.checked; };
   $('show-idle').onchange = (e) => { state.showIdle = e.target.checked; };
   $('show-cone').onchange = (e) => { state.showCone = e.target.checked; };
+  $('search').oninput = renderSearch;
+  $('search').onkeydown = (e) => {
+    if (e.key === 'Enter') { const hit = searchVessels(e.target.value)[0]; if (hit) goVessel(hit); }
+    else if (e.key === 'Escape') { e.target.value = ''; renderSearch(); e.target.blur(); }
+  };
+  $('share').onclick = copyLink;
+  $('theme').onclick = () => setTheme(!isLight());
+  $('help').onclick = () => showWelcome(true);
+  $('w-tour').onclick = () => closeWelcome(true);
+  $('w-explore').onclick = () => closeWelcome(false);
+  $('panel-toggle').onclick = () => document.body.classList.toggle('panel-open');
+  $('metrics-toggle').onclick = () => {
+    const table = $('metrics-section').classList.toggle('show-table');
+    $('metrics-toggle').textContent = table ? '看長條圖' : '看完整表格';
+  };
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (!$('welcome').classList.contains('hidden')) {
+      if (e.code === 'Escape') closeWelcome(false);
+      return;
+    }
     if (e.code === 'Space') { e.preventDefault(); setPlaying(!state.playing); }
     else if (e.code === 'ArrowRight') { stopTour(); step(1); }
     else if (e.code === 'ArrowLeft') { stopTour(); step(-1); }
     else if (e.code === 'KeyG') (tour.on ? stopTour() : startTour());
     else if (e.code === 'KeyH') document.body.classList.toggle('clean');
     else if (e.code === 'KeyP') { state.showPred = !state.showPred; $('show-pred').checked = state.showPred; }
-    else if (e.code === 'Escape') { stopTour(); setFocus(null); }
+    else if (e.code === 'Escape') { stopTour(); state.selected = null; setFocus(null); updateUrl(); }
   });
 }
 
 async function main() {
+  // 網址的 ?theme=light／dark 優先（例如決審投影直接開淺色版），其次是上次的選擇
+  const themeParam = new URLSearchParams(location.search).get('theme');
+  const light = themeParam ? themeParam === 'light' : storeGet(THEME_KEY) === 'light';
+  setTheme(light, false);
   try {
-    D = await (await fetch('data.json', { cache: 'no-store' })).json();
+    D = await fetchJsonWithProgress('data.json', showProgress);
   } catch (err) {
-    $('loading').textContent = '讀不到 data.json：請先執行 python -m seaeye dashboard，並用 http 伺服器開啟此頁';
+    $('loading-text').textContent = '讀不到 data.json：請先執行 python -m seaeye dashboard，並用 http 伺服器開啟此頁';
     return;
   }
   t0ms = Date.parse(D.meta.t0);
   trips.all = D.trips;
   trips.moving = D.trips.filter((d) => d.mv);
+  tripMmsi = new Set(D.trips.map((d) => d.m));
   alerts = D.alerts;
   $('scrub').max = D.meta.duration;
   $('clock-date').textContent = D.meta.t0.slice(0, 10) + ' · UTC';
   $('source').textContent = '資料：' + D.meta.source;
+  $('w-date').textContent = D.meta.t0.slice(0, 10);
+  // 清理後的船舶總數（與構想書一致）；地圖上只畫航跡夠長、能做預測的船
+  $('w-vessels').textContent = (Object.keys(D.vessels || {}).length || D.meta.vessels).toLocaleString('en-US');
   $('legend-cov').textContent = coverageText();
 
   // deck.gl 9 的 DeckGL 不會自動建立底圖，改由 MapLibre 建地圖、deck.gl 疊在上面
   map = new maplibregl.Map({
-    container: 'map', style: MAP_STYLE, center: D.meta.center, zoom: 8.2,
-    attributionControl: { compact: true },
+    container: 'map', style: light ? LIGHT_STYLE : MAP_STYLE, center: D.meta.center,
+    zoom: window.innerWidth > 900 ? 8.2 : 7.4, attributionControl: { compact: true },
   });
   map.setPadding(viewPadding());
   overlay = new deck.MapboxOverlay({
     interleaved: false, getTooltip: tooltip, layers: [],
     onClick: ({ object, layer }) => {
-      if (object && layer.id === 'vessels') setFocus(object.trip.m);
-      else if (object && layer.id === 'alert-rings') select(object);
+      if (object && layer.id === 'vessels') { state.selected = null; setFocus(object.trip.m); }
+      else if (object && layer.id === 'alert-rings') return select(object);
       else if (!object) setFocus(null); // 點空白處取消點選
+      updateUrl();
     },
   });
   map.addControl(overlay);
@@ -656,6 +973,8 @@ async function main() {
   bindControls();
   setTime(0);
   $('loading').remove();
+  // 網址有指定事件或船就直接開；第一次來的人才顯示歡迎畫面
+  if (!applyUrl() && !storeGet(WELCOME_KEY)) showWelcome(true);
   requestAnimationFrame(frame);
 }
 
