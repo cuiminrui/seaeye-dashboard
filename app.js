@@ -12,15 +12,18 @@ const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.j
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'; // 投影機用淺色
 const CJK_FONT = '"Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
 const VERIFY_H = 15; // 「預測 vs. 實際」對照用的時距（分鐘）
+const RESCUE_COLORS = [[244, 63, 94], [168, 85, 247], [234, 179, 8]]; // 三個求救點各一色
+const RESCUE_ANIM_S = 8; // 出發動畫的實際秒數：最慢的船剛好在動畫結束時抵達
 const WELCOME_KEY = 'seaeye-welcome-seen';
 const THEME_KEY = 'seaeye-theme';
 
-// 點選船舶時比較的四種預測：融合是系統最終輸出，其餘三個是它的組成
+// 點選船舶時比較的預測：融合是系統最終輸出，其餘四個預測器是它的組成
 const METHOD_STYLE = {
-  fused: { label: '融合', name: 'NLMS＋Hedge 融合', color: [56, 189, 248], width: 3 },
+  fused: { label: '融合', name: 'Hedge 融合', color: [56, 189, 248], width: 3 },
   cv: { label: 'CV', name: '常速度 CV', color: [226, 232, 240], width: 1.5 },
   ctr: { label: 'CTR', name: '常轉向率 CTR', color: [163, 230, 53], width: 1.5 },
   nlms: { label: 'NLMS', name: 'NLMS 殘差', color: [244, 114, 182], width: 1.5 },
+  imm: { label: 'IMM', name: 'IMM 卡爾曼', color: [251, 146, 60], width: 1.5 },
 };
 
 // 船形圖示（俯視、船頭朝上＝朝北），以 mask 方式上色
@@ -35,6 +38,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   t: 0, playing: false, speed: 60, showPred: true, showIdle: true, showCone: true,
   types: new Set(Object.keys(TYPE_LABEL)), simOnly: false, selected: null, focus: null,
+  rescue: null, // 救援示範進行中：{ mode: 'hungarian' | 'greedy', animStart }
 };
 let D, map, overlay, t0ms, trips = { all: [], moving: [] }, alerts = [], listKey = '', lastFrame = null;
 const vesselCache = new Map(); // MMSI → 完整預測（undefined：未載入、'loading'、null：沒有資料）
@@ -177,12 +181,14 @@ function verification(trip, t) {
 }
 
 function coverageText() {
-  const v = Object.values(D.meta.coverage90 || {}).map((c) => Math.round(c * 100));
-  return v.length ? `${Math.min(...v)}～${Math.max(...v)}%` : '—';
+  const v = Object.values(D.meta.coverage90 || {}).map((c) => c * 100);
+  if (!v.length) return '—';
+  const lo = Math.min(...v).toFixed(1), hi = Math.max(...v).toFixed(1);
+  return lo === hi ? `${lo}%` : `${lo}～${hi}%`;
 }
 
 function fullPredictionAt(mmsi, t) {
-  // 點選船舶用：四種方法 × 各時距的位置，以及各時距的 Hedge 權重
+  // 點選船舶用：融合與四個預測器 × 各時距的位置，以及各時距的 Hedge 權重
   const d = vesselCache.get(mmsi);
   if (!d || d === 'loading') return d;
   const i = lowerBound(d.t, t);
@@ -197,6 +203,8 @@ function fullPredictionAt(mmsi, t) {
 
 async function loadVessel(mmsi) {
   if (vesselCache.has(mmsi)) return;
+  // 主資料裡沒有融合預測的船（一直停泊或低速）也不會有預測檔，不必去抓
+  if (!D.preds[String(mmsi)]) { vesselCache.set(mmsi, null); return; }
   vesselCache.set(mmsi, 'loading');
   try {
     const r = await fetch(`vessels/${mmsi}.json`, { cache: 'no-cache' }); // 有更新才重新下載
@@ -248,6 +256,18 @@ function pendingText(a, t) {
 
 // ---------- 圖層 ----------
 
+let zoneCache = null;
+function zoneData() {
+  // 每個外環一筆；標籤放在海域檔指定的位置，沒指定就放頂點的平均位置
+  if (!zoneCache)
+    zoneCache = (D.zones || []).flatMap((z) => z.rings.map((ring) => {
+      const pts = ring.slice(0, -1);
+      return { name: z.name, polygon: ring, center: z.label_at ||
+        [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length] };
+    }));
+  return zoneCache;
+}
+
 function layers() {
   const t = state.t;
   const tripData = state.showIdle ? trips.all : trips.moving;
@@ -258,7 +278,7 @@ function layers() {
   }
   updateKpis(vessels);
 
-  // 點選中的船：畫四種方法的預測，並更新資訊卡
+  // 點選中的船：畫融合與四個預測器的預測，並更新資訊卡
   const focusVessel = state.focus ? vessels.find((v) => v.trip.m === state.focus) : null;
   const full = focusVessel ? fullPredictionAt(state.focus, t) : null;
   const verify = focusVessel && focusVessel.trip.mv ? verification(focusVessel.trip, t) : null;
@@ -275,11 +295,12 @@ function layers() {
     }
   }
 
+  const rescue = rescueLayers();
   const predLines = [], predDots = [], cones = [];
   // 拉遠時每艘船都畫扇形會糊成一片，只畫點選中的船；拉近到 9.5 級以上才全部畫
   const conesForAll = state.showCone && map.getZoom() >= 9.5;
   for (const v of vessels) {
-    if (!v.trip.mv) continue;
+    if (!v.trip.mv || state.rescue) continue; // 救援示範時先收起預測，畫面只留航線
     const pr = (state.showPred || (state.showCone && v === focusVessel)) && predictionAt(v.trip.m, t);
     if (!pr) continue;
     const ok = pr.pts.map((p, k) => p && pr.r[k] != null && { pos: p, k, r: pr.r[k] }).filter(Boolean);
@@ -292,13 +313,26 @@ function layers() {
   }
 
   const pulse = (Math.sin(performance.now() / 260) + 1) / 2;
-  const active = visibleAlerts().filter((a) => a.td <= t && t <= a.td + ACTIVE_S);
+  const active = state.rescue ? [] : visibleAlerts().filter((a) => a.td <= t && t <= a.td + ACTIVE_S);
   const simLabels = active.filter((a) => a.sim);
   const s = state.selected;
   const sel = s && s.td <= t && t <= s.td + ACTIVE_S ? [s] : []; // 和警示圈一樣只標 1 小時
   const pending = s && s.ts <= t && t < s.td ? [s] : [];
 
   return [
+    // 滯留偵測的指定海域（示範用的假設範圍），畫在最底層
+    new deck.PolygonLayer({
+      id: 'zones', data: zoneData(), getPolygon: (d) => d.polygon,
+      getFillColor: [...COLOR.loiter, 28], getLineColor: [...COLOR.loiter, 200], lineWidthMinPixels: 1.5,
+    }),
+    new deck.TextLayer({
+      id: 'zone-labels', data: zoneData(), getPosition: (d) => d.center,
+      getText: (d) => `${d.name}
+示範用，非真實位置`, getColor: COLOR.loiter, getSize: 12,
+      fontFamily: CJK_FONT, fontWeight: 700, characterSet: 'auto', lineHeight: 1.3,
+      background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [5, 2],
+      updateTriggers: { getBackgroundColor: theme.key },
+    }),
     new deck.TripsLayer({
       id: 'trails', data: tripData, currentTime: t, trailLength: TRAIL_S, fadeTrail: true,
       getPath: (d) => d.p, getTimestamps: (d) => d.t,
@@ -371,7 +405,7 @@ function layers() {
       id: 'method-labels', data: methodLabels, getPosition: (d) => d.pos,
       getText: (d) => METHOD_STYLE[d.m].label, getColor: (d) => methodColor(d.m), getSize: 13,
       getTextAnchor: 'start', getAlignmentBaseline: 'center',
-      getPixelOffset: (d) => [12, (D.meta.methods.indexOf(d.m) - 1.5) * 18],
+      getPixelOffset: (d) => [12, (D.meta.methods.indexOf(d.m) - (D.meta.methods.length - 1) / 2) * 18],
       fontFamily: CJK_FONT, fontWeight: 700, characterSet: 'auto',
       background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [4, 2],
       updateTriggers: { getColor: theme.key, getBackgroundColor: theme.key },
@@ -405,7 +439,151 @@ function layers() {
       background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [6, 3],
       updateTriggers: { getColor: theme.key, getBackgroundColor: theme.key },
     }),
+    new deck.PathLayer({
+      id: 'rescue-routes', data: rescue.routes, getPath: (d) => d.path,
+      getColor: (d) => [...d.color, 230], getWidth: 4, widthUnits: 'pixels', jointRounded: true, capRounded: true,
+    }),
+    new deck.ScatterplotLayer({
+      id: 'rescue-responders', data: rescue.responders, getPosition: (d) => d.pos,
+      getRadius: 13, radiusUnits: 'pixels', stroked: true, filled: false,
+      getLineColor: [...theme.text, 160], lineWidthMinPixels: 1.5, updateTriggers: { getLineColor: theme.key },
+    }),
+    new deck.ScatterplotLayer({
+      id: 'rescue-distress', data: rescue.distress, getPosition: (d) => d.pos,
+      getRadius: 10 + 8 * pulse, radiusUnits: 'pixels', stroked: true, getFillColor: (d) => [...d.color, 90],
+      getLineColor: (d) => d.color, lineWidthMinPixels: 3, updateTriggers: { getRadius: pulse },
+    }),
+    new deck.ScatterplotLayer({
+      id: 'rescue-dots', data: rescue.dots, getPosition: (d) => d.pos,
+      getRadius: 7, radiusUnits: 'pixels', stroked: true, getFillColor: (d) => d.color,
+      getLineColor: [255, 255, 255], lineWidthMinPixels: 2,
+    }),
+    new deck.TextLayer({
+      id: 'rescue-labels', data: rescue.labels, getPosition: (d) => d.pos, getText: (d) => d.text,
+      getColor: (d) => d.color, getSize: 14, getPixelOffset: (d) => d.offset || [0, 0],
+      fontFamily: CJK_FONT, fontWeight: 700, characterSet: 'auto',
+      background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [5, 2],
+      updateTriggers: { getBackgroundColor: theme.key },
+    }),
   ];
+}
+
+// ---------- 救援調度示範 ----------
+
+function alongPath(path, frac) {
+  // 沿折線走到總長的 frac 處（短距離用平面近似即可）
+  const seg = [];
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    const k = Math.cos((path[i][1] * Math.PI) / 180);
+    const d = Math.hypot((path[i][0] - path[i - 1][0]) * k, path[i][1] - path[i - 1][1]);
+    seg.push(d);
+    total += d;
+  }
+  let target = frac * total;
+  for (let i = 0; i < seg.length; i++) {
+    if (target <= seg[i] || i === seg.length - 1) {
+      const a = seg[i] ? Math.min(1, target / seg[i]) : 1;
+      return [path[i][0] + a * (path[i + 1][0] - path[i][0]), path[i][1] + a * (path[i + 1][1] - path[i][1])];
+    }
+    target -= seg[i];
+  }
+  return path[path.length - 1];
+}
+
+function rescueLayers() {
+  const empty = { routes: [], responders: [], distress: [], dots: [], labels: [] };
+  const R = state.rescue && D.rescue?.showcase;
+  if (!R) return empty;
+  const plan = R[state.rescue.mode];
+  const maxMin = Math.max(...plan.assignments.map((a) => a.minutes));
+  const f = Math.min(1, (performance.now() - state.rescue.animStart) / 1000 / RESCUE_ANIM_S);
+  const out = { ...empty, responders: R.responders.map((r) => ({ pos: [r.lon, r.lat] })) };
+  for (const a of plan.assignments) {
+    const color = RESCUE_COLORS[a.distress % RESCUE_COLORS.length];
+    out.routes.push({ path: a.path, color });
+    out.dots.push({ pos: alongPath(a.path, Math.min(1, (f * maxMin) / a.minutes)), color }); // 依各自航行時間比例前進
+    out.labels.push({ pos: a.path[Math.floor(a.path.length / 2)], text: `${Math.round(a.minutes)} 分`, color });
+  }
+  // 求救點彼此可能很近：標籤往「遠離所有求救點中心」的方向推開，避免疊在一起
+  const cx = R.distress.reduce((s, d) => s + d.lon, 0) / R.distress.length;
+  const cy = R.distress.reduce((s, d) => s + d.lat, 0) / R.distress.length;
+  R.distress.forEach((d, i) => {
+    const color = RESCUE_COLORS[i % RESCUE_COLORS.length];
+    const dx = (d.lon - cx) * Math.cos((d.lat * Math.PI) / 180), dy = d.lat - cy, n = Math.hypot(dx, dy);
+    const offset = n > 1e-6 ? [(30 * dx) / n, (-30 * dy) / n] : [0, -26]; // 螢幕 y 軸向下
+    out.distress.push({ pos: [d.lon, d.lat], color });
+    out.labels.push({ pos: [d.lon, d.lat], text: `求救 ${i + 1}`, color, offset });
+  });
+  return out;
+}
+
+function startRescue(mode = 'hungarian', instant = false) {
+  const R = D.rescue?.showcase;
+  if (!R) return;
+  state.selected = null;
+  setFocus(null);
+  setPlaying(false);
+  setTime(R.t);
+  state.rescue = { mode, animStart: performance.now() };
+  document.body.classList.add('rescue-on');
+  $('rescue-btn').classList.add('on');
+  const pts = [...R.distress, ...R.responders];
+  const lons = pts.map((p) => p.lon), lats = pts.map((p) => p.lat);
+  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+    { padding: viewPadding(), duration: instant ? 0 : 1500, maxZoom: 11 }); // 從分享連結開啟時直接定位
+  renderRescueCard();
+  renderAlertList(true);
+  updateUrl();
+}
+
+function stopRescue() {
+  if (!state.rescue) return;
+  state.rescue = null;
+  document.body.classList.remove('rescue-on');
+  $('rescue-btn').classList.remove('on');
+  $('rescue').classList.add('hidden');
+  updateUrl();
+}
+
+function setRescueMode(mode) {
+  state.rescue.mode = mode;
+  state.rescue.animStart = performance.now();
+  renderRescueCard();
+}
+
+function renderRescueCard() {
+  const R = D.rescue.showcase, S = D.rescue.summary, m = state.rescue.mode;
+  const h = R.hungarian, g = R.greedy, cur = R[m];
+  const less = (a, b) => Math.round((1 - a / b) * 100);
+  let html = '<div class="f-head"><span>救援調度示範<span class="badge sim">模擬情境</span></span>' +
+    '<button id="r-close" title="結束示範（Esc）">✕</button></div>';
+  html += `<div class="f-sub">${clock(R.t)}，同一海域 ${R.distress.length} 艘船同時求救（假設情境）；` +
+    `附近 ${R.responders.length} 艘正在航行的船可以支援（白圈）。</div>`;
+  html += '<div class="r-modes">' +
+    `<button data-m="hungarian" class="${m === 'hungarian' ? 'on' : ''}">最佳指派（Hungarian）</button>` +
+    `<button data-m="greedy" class="${m === 'greedy' ? 'on' : ''}">最近的船先去</button></div>`;
+  html += '<table class="f-weights"><tr><th>求救點</th><th>派遣船</th><th>航程</th><th>抵達</th></tr>' +
+    cur.assignments.map((a) => {
+      const c = RESCUE_COLORS[a.distress % RESCUE_COLORS.length];
+      return `<tr><td><i class="rdot" style="background:rgb(${c})"></i>求救 ${a.distress + 1}</td>` +
+        `<td>${esc(vesselName(a.responder))}</td><td>${a.km.toFixed(1)} km</td><td>${Math.round(a.minutes)} 分</td></tr>`;
+    }).join('') + '</table>';
+  html += '<div class="r-compare">' +
+    `<div>總抵達時間：最佳指派 <b>${Math.round(h.total_min)}</b> 分，最近的船先去 <b>${Math.round(g.total_min)}</b> 分` +
+    `（少 ${less(h.total_min, g.total_min)}%）</div>` +
+    `<div>最晚抵達：<b>${Math.round(h.max_min)}</b> 分 對 <b>${Math.round(g.max_min)}</b> 分</div></div>`;
+  html += '<p class="note">航線是海陸網格上的最短路徑（Dijkstra，避開陸地與島嶼），航速取各船當下航速（8～20 節）。' +
+    `全天 ${S.scenarios} 個模擬情境中，最佳指派平均省 ${S.total_saving_pct}% 總抵達時間，` +
+    `${Math.round(S.improved_share * 100)}% 的情境有改善；但有 ${Math.round(S.max_worse_share * 100)}% 的情境，` +
+    '最晚抵達的船反而較慢，這是只最佳化總時間的取捨。</p>';
+  html += '<div class="r-actions"><button id="r-replay">▶ 重播出發動畫</button></div>';
+  const card = $('rescue');
+  card.innerHTML = html;
+  card.classList.remove('hidden');
+  $('r-close').onclick = stopRescue;
+  $('r-replay').onclick = () => setRescueMode(state.rescue.mode);
+  card.querySelectorAll('.r-modes button').forEach((b) => (b.onclick = () => setRescueMode(b.dataset.m)));
 }
 
 // ---------- 介面 ----------
@@ -431,7 +609,7 @@ function setFocus(mmsi) {
 }
 
 function weightChart(d, t) {
-  // 15 分鐘時距的三個預測器權重，近 2 小時的變化（船一轉彎，CTR 的權重就會升上來）
+  // 15 分鐘時距的各預測器權重，近 2 小時的變化（船一轉彎，CTR 的權重就會升上來）
   const n = D.meta.horizons.length, nw = D.meta.weight_methods.length;
   const j = Math.max(0, D.meta.horizons.indexOf(15));
   const span = 7200, i1 = lowerBound(d.t, t), i0 = Math.max(0, lowerBound(d.t, t - span));
@@ -485,8 +663,8 @@ function updateFocusCard(v, full, verify) {
       }).join('') + '</tr>';
     });
     html += '</table>' + weightChart(vesselCache.get(state.focus), state.t);
-    html += '<p class="note">藍色的融合預測＝三個預測器依上表權重加權平均，是系統最終採用的結果。' +
-      `淡藍扇形是依這艘船過去誤差估計的 90% 範圍（實測涵蓋率 ${coverageText()}）。偏航判定則看三者中最接近實際位置的那一個。</p>`;
+    html += '<p class="note">藍色的融合預測＝四個預測器依上表權重加權平均，是系統最終採用的結果。' +
+      `淡藍扇形是依這艘船過去誤差估計的 90% 範圍（實測涵蓋率 ${coverageText()}${D.meta.coverage_note ? '，' + D.meta.coverage_note : ''}）。偏航判定則看 CV、CTR、NLMS 三者中最接近實際位置的那一個。</p>`;
   } else if (v) {
     html += `<p class="note">${full === null ? '此刻沒有預測：航速低於 3 節，或剛開始回報、尚未累積足夠資料。' : '載入預測中…'}</p>`;
   }
@@ -516,6 +694,14 @@ function renderMetrics() {
   $('metrics-note').textContent =
     `${info.vessels} 艘船、${info.paired_issue_points.toLocaleString()} 個配對發布點（未注入模擬異常）` +
     (gain ? `；融合模型 ADE 較常速度低 ${gain}%` : '');
+  const md = D.meta.multiday;
+  if (md) {
+    const pc = (x) => (x * 100).toFixed(1);
+    const [dk, dn] = md.recall.deviation, [gk, gn] = md.recall.ais_gap;
+    $('metrics-note').textContent += `。${md.n_days} 天驗證（${md.days[0].slice(5)}～${md.days[1].slice(5)}，` +
+      `${md.issue_points.toLocaleString()} 個發布點）：融合較 CV 低 ${pc(md.gain)}%（95% 區間 ${pc(md.gain_ci[0])}～${pc(md.gain_ci[1])}%），` +
+      `${md.days_improved}/${md.n_days} 天都較好；模擬注入召回率 偏航 ${dk}/${dn}、訊號中斷 ${gk}/${gn}`;
+  }
 }
 
 function renderFilters() {
@@ -613,10 +799,10 @@ function viewPadding() {
   // （卡片剛點選時可能還沒顯示、量不到寬度，所以用 CSS 設定的固定寬度 340）
   const wide = window.innerWidth > 900;
   if (!wide) // 手機：上方有標題列與船舶卡片，下方有播放列
-    return { top: state.focus ? 300 : 80, bottom: 140, left: 12, right: 12 };
+    return { top: state.focus || state.rescue ? 300 : 80, bottom: 140, left: 12, right: 12 };
   return {
     top: 90, bottom: 80,
-    left: state.focus ? 340 + 32 : 16,
+    left: state.focus || state.rescue ? 340 + 32 : 16,
     right: $('panel').offsetWidth + 32,
   };
 }
@@ -627,9 +813,11 @@ function flyTo(lon, lat, zoom) {
 
 function select(a) {
   // 跳到事件開始前 10 分鐘，讓觀眾看到船原本的航行，再看到異常發生
+  stopRescue();
   state.selected = a;
-  setFocus(a.m); // 同時點選該船，直接看到四種預測如何偏離
-  setTime(a.ts - 600);
+  setFocus(a.m); // 同時點選該船，直接看到各預測如何偏離
+  // 滯留要停滿 1 小時才判定，直接跳到判定前 5 分鐘
+  setTime(a.type === 'loiter' ? a.td - 300 : a.ts - 600);
   flyTo(a.lon, a.lat, 11.5); // 拉近到能看清四條預測線分岔
   setPlaying(true);
   renderAlertList(true);
@@ -677,6 +865,7 @@ function goVessel(m) {
   $('search').value = '';
   $('search-results').classList.add('hidden');
   stopTour();
+  stopRescue();
   state.selected = null;
   const vt = trips.all.filter((d) => d.m === m);
   if (!vt.length) return;
@@ -692,12 +881,16 @@ function goVessel(m) {
 // ---------- 網址參數（直接連到某則事件或某艘船） ----------
 
 function simList() {
-  return alerts.filter((a) => a.sim); // 已依判定時間排序
+  // 分享連結的事件編號：注入的模擬事件在前（依判定時間），示範海域的滯留排在後面，
+  // 這樣加入示範海域之前分享出去的 ?event=N 仍指向同一則事件
+  const sim = alerts.filter((a) => a.sim);
+  return [...sim.filter((a) => a.type !== 'loiter'), ...sim.filter((a) => a.type === 'loiter')];
 }
 
 function linkParams() {
   const p = new URLSearchParams(), s = state.selected;
-  if (s && s.sim) p.set('event', simList().indexOf(s) + 1);
+  if (state.rescue) p.set('rescue', '1');
+  else if (s && s.sim) p.set('event', simList().indexOf(s) + 1);
   else if (state.focus) { p.set('mmsi', state.focus); p.set('t', clock(state.t)); }
   return p;
 }
@@ -729,6 +922,7 @@ function applyUrl() {
     setTime(h * 3600 + mi * 60 - ((t0ms / 1000) % 86400));
     return true;
   };
+  if (p.get('rescue') && D.rescue?.showcase) { startRescue('hungarian', true); return true; }
   const ev = Number(p.get('event'));
   if (ev && simList()[ev - 1]) {
     state.simOnly = true;
@@ -817,7 +1011,11 @@ function startTour() {
   state.simOnly = true;
   state.types = new Set(Object.keys(TYPE_LABEL));
   refresh();
-  tour.list = visibleAlerts();
+  // 最後一站：救援調度示範（有資料時）
+  // 同一海域、同一時段的滯留只停一站（示範海域裡常同時有好幾艘船）
+  const stops = visibleAlerts().filter((a, i, all) => a.type !== 'loiter' ||
+    !all.slice(0, i).some((b) => b.type === 'loiter' && b.d.zone === a.d.zone && Math.abs(b.td - a.td) < 1800));
+  tour.list = [...stops, ...(D.rescue?.showcase ? [{ type: 'rescue' }] : [])];
   tour.idx = -1;
   tour.on = tour.list.length > 0;
   $('tour').classList.toggle('on', tour.on);
@@ -834,9 +1032,23 @@ function nextTourStop() {
   tour.idx += 1;
   if (tour.idx >= tour.list.length) { stopTour(); setPlaying(false); return; }
   const a = tour.list[tour.idx];
+  if (a.type === 'rescue') {
+    tour.rescueStart = performance.now();
+    startRescue('hungarian');
+    return;
+  }
   state.speed = a.type === 'ais_gap' ? 300 : 60; // 訊號中斷要等滿 60 分鐘，加快播放
   $('speed').value = String(state.speed);
   select(a);
+}
+
+function rescueTourCaption(elapsed) {
+  // 救援這一站用實際秒數推進：先播最佳指派，再切到「最近的船先去」對照
+  const R = D.rescue.showcase, h = R.hungarian, g = R.greedy;
+  const head = `延伸功能｜同一海域 ${R.distress.length} 艘船同時求救（假設情境）`;
+  if (elapsed < RESCUE_ANIM_S + 2)
+    return `${head}：系統以 Hungarian 演算法指派附近船隻支援，並規劃避開陸地的航線，總抵達時間 ${Math.round(h.total_min)} 分鐘`;
+  return `${head}：對照「最近的船先去」需要 ${Math.round(g.total_min)} 分鐘；最佳指派少 ${Math.round((1 - h.total_min / g.total_min) * 100)}%`;
 }
 
 function tourCaption(a, t) {
@@ -845,6 +1057,10 @@ function tourCaption(a, t) {
   if (a.type === 'deviation') {
     if (t < a.td) return `${head}：船突然轉向，實際位置開始偏離所有預測器的預期`;
     return `${head}：判定「偏航」——${describe(a, t)}`;
+  }
+  if (a.type === 'loiter') {
+    if (t < a.td) return `${head}：在「${a.d.zone}」內低速停留（已 ${Math.max(0, Math.floor((t - a.ts) / 60))} 分鐘，滿 60 分鐘判定）。海域是示範用的假設範圍`;
+    return `${head}：判定「異常滯留」——船在海纜保護區內停留或下錨，船錨可能拖壞海纜（臺灣近年也發生過海纜疑遭船錨損壞的事件）`;
   }
   if (t < a.td) return `${head}：AIS 訊號消失，系統開始計時（已 ${Math.floor((t - a.ts) / 60)} 分鐘，滿 60 分鐘判定）`;
   if (t < a.te) return `${head}：中斷滿 60 分鐘，發出「疑似關閉 AIS」警示`;
@@ -865,8 +1081,15 @@ function frame(now) {
   }
   if (tour.on) {
     const a = tour.list[tour.idx];
-    setCaption(tourCaption(a, state.t));
-    if (state.t >= tourEnd(a)) nextTourStop();
+    if (a.type === 'rescue') {
+      const e = (now - tour.rescueStart) / 1000;
+      if (e >= RESCUE_ANIM_S + 2 && state.rescue?.mode === 'hungarian') setRescueMode('greedy');
+      setCaption(rescueTourCaption(e));
+      if (e >= 2 * (RESCUE_ANIM_S + 2)) nextTourStop();
+    } else {
+      setCaption(tourCaption(a, state.t));
+      if (state.t >= tourEnd(a)) nextTourStop();
+    }
   }
   lastFrame = now;
   overlay.setProps({ layers: layers() });
@@ -879,7 +1102,7 @@ function tooltip({ object, layer }) {
   if (layer.id === 'vessels') {
     const m = object.trip.m, desc = vesselDesc(m);
     return { text: `${vesselName(m)}\n${desc ? desc + '\n' : ''}航速 ${object.sog ?? '—'} 節` +
-      (object.trip.sim ? '\n（模擬注入）' : '') + (object.trip.mv ? '\n點一下比較四種預測' : '') };
+      (object.trip.sim ? '\n（模擬注入）' : '') + (object.trip.mv ? '\n點一下比較各預測方法' : '') };
   }
   if (layer.id === 'alert-rings')
     return { text: `${TYPE_LABEL[object.type]}${object.sim ? '（模擬情境）' : ''}\n${vesselName(object.m)}\n${describe(object)}` };
@@ -893,6 +1116,7 @@ function bindControls() {
   $('prev-alert').onclick = () => { stopTour(); step(-1); };
   $('next-alert').onclick = () => { stopTour(); step(1); };
   $('tour').onclick = () => (tour.on ? stopTour() : startTour());
+  $('rescue-btn').onclick = () => { stopTour(); state.rescue ? stopRescue() : startRescue(); };
   $('show-pred').onchange = (e) => { state.showPred = e.target.checked; };
   $('show-idle').onchange = (e) => { state.showIdle = e.target.checked; };
   $('show-cone').onchange = (e) => { state.showCone = e.target.checked; };
@@ -923,7 +1147,8 @@ function bindControls() {
     else if (e.code === 'KeyG') (tour.on ? stopTour() : startTour());
     else if (e.code === 'KeyH') document.body.classList.toggle('clean');
     else if (e.code === 'KeyP') { state.showPred = !state.showPred; $('show-pred').checked = state.showPred; }
-    else if (e.code === 'Escape') { stopTour(); state.selected = null; setFocus(null); updateUrl(); }
+    else if (e.code === 'Escape') { stopTour(); stopRescue(); state.selected = null; setFocus(null); updateUrl(); }
+    else if (e.code === 'KeyR') (state.rescue ? stopRescue() : startRescue());
   });
 }
 
@@ -950,6 +1175,7 @@ async function main() {
   // 清理後的船舶總數（與構想書一致）；地圖上只畫航跡夠長、能做預測的船
   $('w-vessels').textContent = (Object.keys(D.vessels || {}).length || D.meta.vessels).toLocaleString('en-US');
   $('legend-cov').textContent = coverageText();
+  $('legend-zone').classList.toggle('hidden', !(D.zones || []).length);
 
   // deck.gl 9 的 DeckGL 不會自動建立底圖，改由 MapLibre 建地圖、deck.gl 疊在上面
   map = new maplibregl.Map({
@@ -960,7 +1186,7 @@ async function main() {
   overlay = new deck.MapboxOverlay({
     interleaved: false, getTooltip: tooltip, layers: [],
     onClick: ({ object, layer }) => {
-      if (object && layer.id === 'vessels') { state.selected = null; setFocus(object.trip.m); }
+      if (object && layer.id === 'vessels') { stopRescue(); state.selected = null; setFocus(object.trip.m); }
       else if (object && layer.id === 'alert-rings') return select(object);
       else if (!object) setFocus(null); // 點空白處取消點選
       updateUrl();

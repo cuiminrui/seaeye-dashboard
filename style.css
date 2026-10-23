@@ -150,6 +150,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   width: 18px; height: 12px; border-radius: 2px 9px 9px 2px;
   background: rgba(56, 189, 248, 0.3); border: 1px solid rgba(56, 189, 248, 0.7);
 }
+.swatch.zone { width: 14px; height: 10px; border-radius: 2px; border: 1.5px solid #a855f7; background: rgba(168, 85, 247, 0.2); margin: 0 12px 0 2px; }
 .swatch.ring { width: 12px; height: 12px; border-radius: 50%; border: 2px solid; background: none; margin: 0 14px 0 2px; }
 /* 圖例的船形：與地圖上的圖示同一個輪廓 */
 .ship {
@@ -158,10 +159,25 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 }
 .ship.small { transform: scale(0.7); }
 
-/* ---------- 點選船舶的資訊卡 ---------- */
-#focus { left: 16px; top: 120px; width: 340px; max-height: calc(100% - 240px); overflow-y: auto; padding: 12px 14px; font-size: 13px; }
-/* 點選船舶或導覽時，左下圖例會和卡片、字幕搶位置，先收起來 */
-body.has-focus #legend, body.touring #legend { display: none; }
+/* ---------- 點選船舶的資訊卡、救援示範卡（同一個位置） ---------- */
+#focus, #rescue { left: 16px; top: 120px; width: 340px; max-height: calc(100% - 240px); overflow-y: auto; padding: 12px 14px; font-size: 13px; }
+/* 點選船舶、導覽或救援示範時，左下圖例會和卡片、字幕搶位置，先收起來 */
+body.has-focus #legend, body.touring #legend, body.rescue-on #legend { display: none; }
+.r-modes { display: flex; gap: 6px; margin: 4px 0 10px; }
+.r-modes button {
+  flex: 1; font: inherit; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--raised); color: var(--text);
+}
+.r-modes button.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.rdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.r-compare { margin: 10px 0 4px; padding: 8px; border-radius: 6px; background: var(--raised); line-height: 1.6; font-size: 12.5px; }
+.r-compare b { color: var(--accent); }
+.r-actions { margin-top: 8px; }
+.r-actions button, #controls #rescue-btn.on {
+  font: inherit; font-size: 12.5px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--raised); color: var(--text);
+}
+#controls #rescue-btn.on { background: #f43f5e; color: #fff; border-color: #f43f5e; }
 .f-head { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 700; }
 .f-head button { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; cursor: pointer; }
 .f-sub { color: var(--muted); margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
@@ -261,7 +277,7 @@ body.clean #controls, body.clean #hint, body.clean #legend { display: none; }
   #controls { left: 8px; right: 8px; bottom: 8px; flex-wrap: wrap; gap: 6px; padding: 8px; }
   #timeline { order: -1; flex-basis: 100%; }
   .opt, .btn-text { display: none; }
-  #focus { left: 8px; right: 8px; width: auto; top: 104px; max-height: 38%; }
+  #focus, #rescue { left: 8px; right: 8px; width: auto; top: 104px; max-height: 38%; }
   #caption { left: 8px; right: 8px; bottom: 170px; width: auto; max-width: none; font-size: 14px; }
   #welcome .w-card { padding: 20px; }
   #welcome ul { font-size: 13.5px; }
