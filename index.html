@@ -72,9 +72,11 @@
     <div><i class="ship" style="background:#2dd4bf"></i>航行中（船頭＝航向）</div>
     <div><i class="ship small" style="background:#64748b"></i>停泊／低速</div>
     <div><i class="ship" style="background:#fbbf24"></i>模擬注入的船</div>
+    <div><i class="ship rescue" style="background:#ff40a0"></i>救援船（<span id="legend-rescue-n">0</span> 艘，搜尋「救援」可列出）</div>
     <div><i class="swatch dot" style="background:#38bdf8"></i>融合預測（5／15／30 分）</div>
     <div><i class="swatch cone"></i>90% 不確定範圍（實測涵蓋 <span id="legend-cov">—</span>）</div>
-    <div class="muted">點選船舶：比較融合與四種預測器</div>
+    <div class="muted" id="legend-methods">點選船舶：看簡易說明，或比較融合與各預測器</div>
+    <div id="legend-ghost" class="hidden"><i class="ship ghost"></i>訊號中斷（最後回報位置）</div>
     <div><i class="swatch ring" style="border-color:#f97316"></i>偏航</div>
     <div><i class="swatch ring" style="border-color:#ef4444"></i>疑似關閉 AIS</div>
     <div><i class="swatch ring" style="border-color:#a855f7"></i>異常滯留</div>
@@ -117,7 +119,8 @@
         <li>這是 <b id="w-date">2023-06-01</b> 美國南加州外海一整天、<b id="w-vessels">1,309</b> 艘船的<b>真實 AIS 資料</b>回放（NOAA 公開資料）。</li>
         <li>系統即時預測每艘船 <b>5／15／30 分鐘後</b>的位置（藍線與淡藍扇形），並在船<b>偏航</b>或<b>疑似關閉 AIS</b> 時發出警示。</li>
         <li>標示 <span class="badge sim">模擬情境</span> 的事件，是刻意注入真實航跡的測試案例，用來驗證偵測能力，不是真實發生的事。</li>
-        <li>點任何一艘船，可以比較融合結果與四種預測器（CV、CTR、NLMS、IMM），並對照「15 分鐘前的預測」和船實際到達的位置。</li>
+        <li>點任何一艘船，先看白話的簡易說明；按「看詳細」可以比較融合結果與<span id="w-methods">各預測器</span>，並對照「15 分鐘前的預測」和船實際到達的位置。</li>
+        <li>訊號中斷的船會在最後位置留下<b>淡色船影</b>；多艘船同時失聯時，系統研判是岸基接收站斷訊，不當成可疑行為。</li>
         <li>按下方的 <b>🚑 救援</b>，看多艘船同時求救時，系統如何指派附近的船並規劃避開陸地的航線（模擬情境）。</li>
       </ul>
       <div class="w-actions">

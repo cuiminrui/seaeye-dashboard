@@ -104,6 +104,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .mbar.best span, .mbar.best em { color: var(--accent); font-weight: 700; }
 .mbar.best .mtrack i { background: var(--accent); opacity: 1; }
 .mbar-caption { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.plain { font-size: 12.5px; line-height: 1.55; background: var(--raised); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; }
+.plain b { color: var(--accent); }
 .note { font-size: 11.5px; color: var(--muted); margin: 6px 0 0; line-height: 1.5; }
 
 .alerts { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -137,6 +139,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .badge.sim { background: var(--sim); color: #1f2937; }
 .badge.high { background: #ef4444; color: #fff; }
 .badge.normal { background: var(--raised); color: var(--muted); font-weight: 500; }
+.badge.rescue { background: #ff40a0; color: #fff; }
 #panel-toggle { display: none; }
 
 /* ---------- 圖例 ---------- */
@@ -158,6 +161,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   clip-path: path("M4 0C6 3 7 6 7 8V17Q7 18 6 18H2Q1 18 1 17V8C1 6 2 3 4 0Z");
 }
 .ship.small { transform: scale(0.7); }
+.ship.ghost { background: #94a3b8; opacity: 0.55; }
+.ship.rescue { box-shadow: 0 0 0 2px rgba(255, 64, 160, 0.35); }
 
 /* ---------- 點選船舶的資訊卡、救援示範卡（同一個位置） ---------- */
 #focus, #rescue { left: 16px; top: 120px; width: 340px; max-height: calc(100% - 240px); overflow-y: auto; padding: 12px 14px; font-size: 13px; }
@@ -193,6 +198,10 @@ body.has-focus #legend, body.touring #legend, body.rescue-on #legend { display: 
 .wchart .grid { stroke: var(--line); stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
 .wchart-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: 2px 0 6px; }
 #focus h3 + .wchart, .f-weights + h3 { margin-top: 10px; }
+.f-plain { display: grid; gap: 6px; margin: 8px 0; font-size: 13px; line-height: 1.5; }
+.f-plain b { display: inline-block; min-width: 68px; margin-right: 6px; color: var(--muted); font-weight: 600; }
+.f-plain .warn { color: var(--dev); font-weight: 700; }
+.link-btn.f-toggle { float: none; display: block; margin: 6px 0 10px; font-size: 12.5px; }
 .wbar { display: inline-block; width: 38px; height: 6px; background: var(--raised); border-radius: 3px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
 .wbar i { display: block; height: 100%; border-radius: 3px; }
 
@@ -206,7 +215,7 @@ body.has-focus #legend, body.touring #legend, body.rescue-on #legend { display: 
 /* 時間軸上方是警示直方圖（每 30 分鐘一格） */
 #timeline { position: relative; flex: 1; min-width: 120px; padding-top: 22px; }
 #scrub { width: 100%; accent-color: var(--accent); margin: 0; }
-#ticks { position: absolute; left: 0; right: 0; top: 0; height: 20px; }
+#ticks { position: absolute; left: 0; right: 0; top: 0; height: 20px; cursor: pointer; }
 #ticks svg { display: block; width: 100%; height: 100%; }
 #tour.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
