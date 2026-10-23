@@ -43,60 +43,63 @@ const SHIP_ICON = {
   mapping: { ship: { x: 0, y: 0, width: 40, height: 96, anchorY: 48, mask: true } },
 };
 
-// 船型徽章：圓底白色圖案，拉近時畫在船旁邊。順序也是圖例的順序
-const FG = '#fff'; // 徽章圖案的顏色
-const CLASS_BADGE = {
-  rescue: ['救援船', '#e11d48', // 醫療箱
-    `<path d="M19 16v-3.5h10V16" fill="none" stroke="${FG}" stroke-width="2.5"/><rect x="11" y="16" width="26" height="19" rx="3" fill="${FG}"/>` +
-    '<rect x="22" y="18.5" width="4" height="14" fill="#e11d48"/><rect x="17" y="23.5" width="14" height="4" fill="#e11d48"/>'],
-  government: ['公務／執法船', '#1e3a8a', // 警徽
-    `<path d="M24 9l11 4v9c0 8-5 13-11 16-6-3-11-8-11-16v-9z" fill="${FG}"/>` +
-    '<path d="M24 16l2.1 4.4 4.8.6-3.5 3.3.9 4.8-4.3-2.3-4.3 2.3.9-4.8-3.5-3.3 4.8-.6z" fill="#1e3a8a"/>'],
-  fishing: ['漁船', '#0284c7', // 魚
-    `<ellipse cx="21" cy="24" rx="11" ry="7" fill="${FG}"/><path d="M30 24l8-7v14z" fill="${FG}"/><circle cx="15.5" cy="22.5" r="1.8" fill="#0284c7"/>`],
-  cargo: ['貨輪', '#b45309', // 貨櫃
-    `<rect x="10" y="13" width="28" height="10" fill="${FG}"/><rect x="10" y="25" width="28" height="10" fill="${FG}"/>` +
-    '<path d="M16 13v10M22 13v10M28 13v10M34 13v10M16 25v10M22 25v10M28 25v10M34 25v10" stroke="#b45309" stroke-width="1.6"/>'],
-  tanker: ['油輪', '#475569', // 油桶
-    `<rect x="15" y="11" width="18" height="26" rx="3" fill="${FG}"/><path d="M15 18h18M15 30h18" stroke="#475569" stroke-width="2.2"/>`],
-  passenger: ['客船', '#be185d', // 很多人
-    `<circle cx="15" cy="18" r="3.6" fill="${FG}"/><circle cx="33" cy="18" r="3.6" fill="${FG}"/><circle cx="24" cy="15" r="4.2" fill="${FG}"/>` +
-    `<path d="M9 33a6 6 0 0 1 12 0zM27 33a6 6 0 0 1 12 0z" fill="${FG}"/><path d="M17 35a7 7.5 0 0 1 14 0z" fill="${FG}"/>`],
-  tug: ['拖船', '#4d7c0f', // 鉤子
-    `<circle cx="24" cy="12" r="3.2" fill="none" stroke="${FG}" stroke-width="2.6"/>` +
-    `<path d="M24 15v13a6.5 6.5 0 1 1-11-4.7" fill="none" stroke="${FG}" stroke-width="3.4" stroke-linecap="round"/><path d="M10 25l3-5 3.8 4.3z" fill="${FG}"/>`],
-  pilot: ['引水船', '#2563eb', // 水滴
-    `<path d="M24 10c0 0-9 11-9 17a9 9 0 0 0 18 0c0-6-9-17-9-17z" fill="${FG}"/>`],
-  service: ['作業船', '#0f766e', // 扳手
-    `<path d="M16 33l11-11" stroke="${FG}" stroke-width="4.5" stroke-linecap="round"/>` +
-    `<path d="M30.5 12.5a6.5 6.5 0 1 0 5 5l-4 1.5-2.5-2.5z" fill="${FG}"/>`],
-  pleasure: ['遊艇／帆船', '#7e22ce', // 酒杯
-    `<path d="M16 11h16c0 8-3.5 13-8 13s-8-5-8-13z" fill="${FG}"/><path d="M24 24v10M18 35h12" stroke="${FG}" stroke-width="2.6" stroke-linecap="round"/>`],
-  other: ['其他船型', '#6b7280',
-    `<text x="24" y="29" text-anchor="middle" font-size="13" font-weight="700" fill="${FG}" font-family='${CJK_FONT.replace(/"/g, '')}'>其他</text>`],
-  unknown: ['未知船型', '#374151',
-    `<text x="24" y="33" text-anchor="middle" font-size="26" font-weight="700" fill="${FG}" font-family="sans-serif">?</text>`],
+// 船型圖案：畫在船身中央（深色圖案，保持正立不跟著船頭轉）。順序也是圖例的順序。
+// 每個圖案是 (主色, 細節色) => 48×48 的 SVG 片段：主色畫輪廓，細節色畫貨櫃格線、十字等
+const CLASS_GLYPH = {
+  rescue: ['救援船', (f, d) => // 醫療箱
+    `<path d="M18 15v-4h12v4" fill="none" stroke="${f}" stroke-width="3.5"/><rect x="8" y="15" width="32" height="24" rx="4" fill="${f}"/>` +
+    `<rect x="21.5" y="18.5" width="5" height="17" fill="${d}"/><rect x="15.5" y="24.5" width="17" height="5" fill="${d}"/>`],
+  government: ['公務／執法船', (f, d) => // 警徽
+    `<path d="M24 6l14 5v11c0 10-6 16-14 20-8-4-14-10-14-20V11z" fill="${f}"/>` +
+    `<path d="M24 15l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9-4.3-4.1 5.9-.8z" fill="${d}"/>`],
+  fishing: ['漁船', (f, d) => // 魚
+    `<ellipse cx="20" cy="24" rx="14" ry="9" fill="${f}"/><path d="M31 24l12-10v20z" fill="${f}"/><circle cx="13" cy="22" r="2.4" fill="${d}"/>`],
+  cargo: ['貨輪', (f, d) => // 貨櫃
+    `<rect x="7" y="10" width="34" height="13" fill="${f}"/><rect x="7" y="25" width="34" height="13" fill="${f}"/>` +
+    `<path d="M15.5 10v13M24 10v13M32.5 10v13M15.5 25v13M24 25v13M32.5 25v13" stroke="${d}" stroke-width="2"/>`],
+  tanker: ['油輪', (f, d) => // 油桶
+    `<rect x="12" y="7" width="24" height="34" rx="4" fill="${f}"/><path d="M12 16h24M12 32h24" stroke="${d}" stroke-width="2.8"/>`],
+  passenger: ['客船', (f) => // 很多人
+    `<circle cx="12" cy="17" r="4.6" fill="${f}"/><circle cx="36" cy="17" r="4.6" fill="${f}"/><circle cx="24" cy="13" r="5.4" fill="${f}"/>` +
+    `<path d="M4 36a8 8 0 0 1 16 0zM28 36a8 8 0 0 1 16 0z" fill="${f}"/><path d="M14 39a10 10.5 0 0 1 20 0z" fill="${f}"/>`],
+  tug: ['拖船', (f) => // 鉤子
+    `<circle cx="25" cy="9" r="4" fill="none" stroke="${f}" stroke-width="3.2"/>` +
+    `<path d="M25 13v16a8.5 8.5 0 1 1-14.5-6" fill="none" stroke="${f}" stroke-width="4.5" stroke-linecap="round"/><path d="M6 25l4-7 5 5.6z" fill="${f}"/>`],
+  pilot: ['引水船', (f) => // 水滴
+    `<path d="M24 5c0 0-12 14-12 22a12 12 0 0 0 24 0c0-8-12-22-12-22z" fill="${f}"/>`],
+  service: ['作業船', (f) => // 扳手
+    `<path d="M12 37l14-14" stroke="${f}" stroke-width="6" stroke-linecap="round"/>` +
+    `<path d="M31 9a8.5 8.5 0 1 0 8 8l-5.2 2-3.3-3.3z" fill="${f}"/>`],
+  pleasure: ['遊艇／帆船', (f) => // 酒杯
+    `<path d="M13 7h22c0 11-5 17-11 17s-11-6-11-17z" fill="${f}"/><path d="M24 24v12M16 38h16" stroke="${f}" stroke-width="3.5" stroke-linecap="round"/>`],
+  other: ['其他船型', (f) => // 其他：三個點（船身裡放不下兩個字）
+    `<circle cx="11" cy="24" r="5" fill="${f}"/><circle cx="24" cy="24" r="5" fill="${f}"/><circle cx="37" cy="24" r="5" fill="${f}"/>`],
+  unknown: ['未知船型', (f) =>
+    `<text x="24" y="38" text-anchor="middle" font-size="40" font-weight="800" fill="${f}" font-family="sans-serif">?</text>`],
 };
-const BADGE_KEYS = Object.keys(CLASS_BADGE);
+const GLYPH_KEYS = Object.keys(CLASS_GLYPH);
+const GLYPH_INK = '#0b1220', GLYPH_DETAIL = '#ffffff';
 
-function badgeInner(key) {
-  const [, bg, glyph] = CLASS_BADGE[key];
-  return `<circle cx="24" cy="24" r="22" fill="${bg}" stroke="#fff" stroke-width="2"/>${glyph}`;
+function glyphSvg(key, inner) {
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">${inner}</svg>`);
 }
 
-function badgeUrl(key) {
-  // 圖例用的單一徽章
-  return 'data:image/svg+xml;charset=utf-8,' +
-    encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">${badgeInner(key)}</svg>`);
+function legendGlyphUrl(key) {
+  // 圖例：船身色的圓角方塊裡放圖案，和地圖上「船身裡的圖案」同一個樣子
+  const hull = key === 'rescue' ? '#ff40a0' : '#2dd4bf';
+  return glyphSvg(key, `<rect width="48" height="48" rx="10" fill="${hull}"/>` +
+    `<g transform="translate(6 6) scale(0.75)">${CLASS_GLYPH[key][1](GLYPH_INK, GLYPH_DETAIL)}</g>`);
 }
 
-const BADGE_ICON = {
+const GLYPH_ICON = {
   atlas: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${48 * BADGE_KEYS.length}" height="48">` +
-    BADGE_KEYS.map((k, i) => `<g transform="translate(${48 * i},0)">${badgeInner(k)}</g>`).join('') + '</svg>'),
-  mapping: Object.fromEntries(BADGE_KEYS.map((k, i) => [k, { x: 48 * i, y: 0, width: 48, height: 48 }])),
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${48 * GLYPH_KEYS.length}" height="48">` +
+    GLYPH_KEYS.map((k, i) => `<g transform="translate(${48 * i},0)">${CLASS_GLYPH[k][1](GLYPH_INK, GLYPH_DETAIL)}</g>`).join('') + '</svg>'),
+  mapping: Object.fromEntries(GLYPH_KEYS.map((k, i) => [k, { x: 48 * i, y: 0, width: 48, height: 48 }])),
 };
-const BADGE_ZOOM = 10; // 拉近到這一級以上，每艘船都畫徽章；拉遠時只畫救援船與點選中的船
+const GLYPH_ZOOM = 10; // 拉近到這一級以上，每艘船身裡都畫圖案；拉遠時船太小，只畫救援船與點選中的船
+const GLYPH_SHIP_SCALE = 1.35; // 畫圖案時船身放大一點，圖案才看得清楚
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -151,7 +154,8 @@ function vesselColor(trip, theme) {
 }
 
 function shipSize(trip) {
-  return trip.mv || trip.rescue ? 26 : 16;
+  const base = trip.mv || trip.rescue ? 26 : 16;
+  return map.getZoom() >= GLYPH_ZOOM ? base * GLYPH_SHIP_SCALE : base;
 }
 
 function esc(s) {
@@ -392,7 +396,8 @@ function layers() {
   }
   updateKpis(vessels);
   const rescueVessels = vessels.filter((v) => v.trip.rescue);
-  const badged = map.getZoom() >= BADGE_ZOOM ? vessels
+  const glyphOn = map.getZoom() >= GLYPH_ZOOM;
+  const badged = glyphOn ? vessels
     : vessels.filter((v) => v.trip.rescue || v.trip.m === state.focus);
 
   // 點選中的船：畫融合與四個預測器的預測，並更新資訊卡
@@ -529,6 +534,7 @@ function layers() {
       id: 'vessel-outline', data: vessels, iconAtlas: SHIP_ICON.atlas, iconMapping: SHIP_ICON.mapping,
       getIcon: () => 'ship', getPosition: (d) => d.pos, getAngle: (d) => -d.heading,
       getSize: (d) => shipSize(d.trip) + 3, sizeScale: shipScale(), getColor: [11, 18, 32, 230],
+      updateTriggers: { getSize: glyphOn },
     }),
     // 救援船：船身外加一圈桃紅色外圈與「救援」標籤，拉遠時也找得到
     new deck.ScatterplotLayer({
@@ -547,12 +553,13 @@ function layers() {
       getIcon: () => 'ship', getPosition: (d) => d.pos, getAngle: (d) => -d.heading,
       getSize: (d) => shipSize(d.trip), sizeScale: shipScale(),
       getColor: (d) => vesselColor(d.trip, theme),
-      updateTriggers: { getColor: theme.key },
+      updateTriggers: { getColor: theme.key, getSize: glyphOn },
     }),
     new deck.IconLayer({
-      id: 'class-badges', data: badged, iconAtlas: BADGE_ICON.atlas, iconMapping: BADGE_ICON.mapping,
-      getIcon: (d) => d.trip.cls, getPosition: (d) => d.pos, getSize: 19, sizeUnits: 'pixels',
-      getPixelOffset: [15, -15],
+      // 船型圖案疊在船身中央：寬度約等於船身寬，保持正立
+      id: 'class-glyphs', data: badged, iconAtlas: GLYPH_ICON.atlas, iconMapping: GLYPH_ICON.mapping,
+      getIcon: (d) => d.trip.cls, getPosition: (d) => d.pos, getSize: (d) => shipSize(d.trip) * 0.42,
+      sizeScale: shipScale(), updateTriggers: { getSize: glyphOn },
     }),
     new deck.ScatterplotLayer({
       id: 'focus-ring', data: focusVessel ? [focusVessel] : [], getPosition: (d) => d.pos,
@@ -913,7 +920,7 @@ function renderMetrics() {
   // 先用一句白話講結論，再放長條圖
   const last = `${D.meta.horizons[D.meta.horizons.length - 1]} 分鐘`, first = `${D.meta.horizons[0]} 分鐘`;
   const plain = cv && fu && fu[last] != null
-    ? `<div class="plain">白話說：系統預測船 <b>${last}後</b>的位置，平均差 <b>${(fu[last] / 1000).toFixed(1)} 公里</b>` +
+    ? `<div class="plain">系統預測船 <b>${last}後</b>的位置，平均差 <b>${(fu[last] / 1000).toFixed(1)} 公里</b>` +
       `（${first}後約 ${Math.round(fu[first]).toLocaleString('en-US')} 公尺）；比「照目前速度直線走」準 <b>${gain}%</b>。</div>`
     : '';
   $('metric-bars').innerHTML = plain + rows.map((r) =>
@@ -1527,11 +1534,11 @@ async function main() {
   }
   t0ms = Date.parse(D.meta.t0);
   for (const d of D.trips) {
-    d.cls = CLASS_BADGE[vinfo(d.m).key] ? vinfo(d.m).key : 'unknown';
+    d.cls = CLASS_GLYPH[vinfo(d.m).key] ? vinfo(d.m).key : 'unknown';
     d.rescue = d.cls === 'rescue';
   }
-  $('legend-classes').innerHTML = BADGE_KEYS.map((k) =>
-    `<span><img src="${badgeUrl(k)}" alt="">${CLASS_BADGE[k][0]}</span>`).join('');
+  $('legend-classes').innerHTML = GLYPH_KEYS.map((k) =>
+    `<span><img src="${legendGlyphUrl(k)}" alt="">${CLASS_GLYPH[k][0]}</span>`).join('');
   trips.all = D.trips;
   // 救援船即使整段低速（港內待命）也一直畫出來
   trips.moving = D.trips.filter((d) => d.mv || d.rescue);
