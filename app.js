@@ -969,12 +969,23 @@ function setTheme(light, persist = true) {
 
 // ---------- 載入資料（顯示進度） ----------
 
-async function fetchJsonWithProgress(url, onProgress) {
+async function expectedSize() {
+  // 匯出時記下的 data.json 大小（位元組）；讀不到就回傳 0，載入畫面改顯示動畫
+  try {
+    const r = await fetch('data-size.json', { cache: 'no-cache' });
+    return r.ok ? Number((await r.json()).bytes) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function fetchJsonWithProgress(url, onProgress, expected = 0) {
   // no-cache：每次向伺服器確認，沒更新就用瀏覽器裡的副本，不必重新下載 10 MB
   const r = await fetch(url, { cache: 'no-cache' });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  // 伺服器有壓縮時，Content-Length 是壓縮後的大小，和讀到的位元組數對不起來，就只顯示已載入量
-  const total = r.headers.get('Content-Encoding') ? 0 : Number(r.headers.get('Content-Length')) || 0;
+  // 伺服器有壓縮時（GitHub Pages 會），Content-Length 是壓縮後的大小，和讀到的位元組數對不起來，
+  // 改用匯出時記下的大小
+  const total = (r.headers.get('Content-Encoding') ? 0 : Number(r.headers.get('Content-Length'))) || expected;
   if (!r.body || !r.body.getReader) return r.json();
   const reader = r.body.getReader(), chunks = [];
   let got = 0;
@@ -992,8 +1003,8 @@ async function fetchJsonWithProgress(url, onProgress) {
 }
 
 function showProgress(got, total) {
-  const mb = (got / 1048576).toFixed(1);
-  $('loading-text').textContent = total ? `載入資料中… ${mb}／${(total / 1048576).toFixed(1)} MB` : `載入資料中… ${mb} MB`;
+  const pct = total ? Math.min(100, Math.floor((got / total) * 100)) : 0;
+  $('loading-text').textContent = total ? `載入資料中… ${pct}%` : `載入資料中… ${(got / 1048576).toFixed(1)} MB`;
   $('loading-bar').style.width = total ? `${Math.min(100, (got / total) * 100)}%` : '100%';
   $('loading-bar').classList.toggle('indeterminate', !total);
 }
@@ -1158,7 +1169,7 @@ async function main() {
   const light = themeParam ? themeParam === 'light' : storeGet(THEME_KEY) === 'light';
   setTheme(light, false);
   try {
-    D = await fetchJsonWithProgress('data.json', showProgress);
+    D = await fetchJsonWithProgress('data.json', showProgress, await expectedSize());
   } catch (err) {
     $('loading-text').textContent = '讀不到 data.json：請先執行 python -m seaeye dashboard，並用 http 伺服器開啟此頁';
     return;
