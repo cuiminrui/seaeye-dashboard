@@ -134,6 +134,20 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .a-time { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
 .a-body { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
 .a-body b { color: var(--text); }
+.a-risk { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+#review-bar { font-size: 12px; margin: -2px 0 8px; }
+#review-bar .link-btn { margin-left: 6px; }
+.a-review { display: flex; gap: 6px; margin-top: 6px; }
+.a-review button { flex: 1; font: inherit; font-size: 12px; padding: 3px 0; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--raised); color: var(--text); }
+.a-review button.on { border-color: var(--text); font-weight: 700; }
+.badge.review.yes { background: #16a34a; color: #fff; }
+.badge.review.no { background: #64748b; color: #fff; }
+.badge.review.unsure { background: #f59e0b; color: #1f2937; }
+.risk { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 5px; margin-right: 6px; }
+.risk.r-hi { background: #ef4444; color: #fff; }
+.risk.r-mid { background: #f59e0b; color: #1f2937; }
+.risk.r-lo { background: var(--raised); color: var(--muted); }
 #alert-list li.high .a-body, #alert-list li.high .a-time { color: var(--text); }
 .badge { display: inline-block; font-size: 11px; border-radius: 4px; padding: 1px 6px; margin-left: 6px; font-weight: 700; }
 .badge.sim { background: var(--sim); color: #1f2937; }
@@ -163,6 +177,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .ship.small { transform: scale(0.7); }
 .ship.ghost { background: #94a3b8; opacity: 0.55; }
 .ship.rescue { box-shadow: 0 0 0 2px rgba(255, 64, 160, 0.35); }
+#legend-class-box summary { cursor: pointer; color: var(--muted); }
+#legend-classes { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 10px; margin-top: 5px; }
+#legend-classes span { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+#legend-classes img { width: 16px; height: 16px; }
 
 /* ---------- 點選船舶的資訊卡、救援示範卡（同一個位置） ---------- */
 #focus, #rescue { left: 16px; top: 120px; width: 340px; max-height: calc(100% - 240px); overflow-y: auto; padding: 12px 14px; font-size: 13px; }
@@ -264,7 +282,11 @@ body.clean #caption { bottom: 32px; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
 /* 錄影模式：只留地圖、時鐘與警示 */
-body.clean #controls, body.clean #hint, body.clean #legend { display: none; }
+body.clean #controls, body.clean #hint, body.clean #legend, body.clean #version { display: none; }
+#version {
+  position: absolute; left: 18px; bottom: 1px; z-index: 1; font-size: 11px; color: var(--muted);
+  text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg); pointer-events: none;
+}
 
 /* ---------- 手機與窄螢幕：地圖為主，數據面板改成可收合的抽屜 ---------- */
 @media (max-width: 900px) {

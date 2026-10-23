@@ -59,6 +59,7 @@
 
     <section class="alerts">
       <h2>警示紀錄 <span id="alert-count" class="muted"></span></h2>
+      <div id="review-bar" class="muted"></div>
       <div class="filters" id="filters"></div>
       <ol id="alert-list"></ol>
     </section>
@@ -81,6 +82,7 @@
     <div><i class="swatch ring" style="border-color:#ef4444"></i>疑似關閉 AIS</div>
     <div><i class="swatch ring" style="border-color:#a855f7"></i>異常滯留</div>
     <div id="legend-zone" class="hidden"><i class="swatch zone"></i>指定海域（示範用假設範圍）</div>
+    <details id="legend-class-box"><summary>船型圖示（拉近後畫在船旁）</summary><div id="legend-classes"></div></details>
   </div>
 
   <footer id="controls" class="glass">
@@ -106,6 +108,7 @@
   </footer>
 
   <div id="source"></div>
+  <div id="version"></div>
   <div id="caption" class="glass hidden"></div>
   <div id="hint">G 自動導覽 · R 救援示範 · 空白鍵 播放／暫停 · ← → 切換警示 · 點船比較預測、Esc 取消 · H 隱藏介面（錄影用）</div>
   <div id="toast" class="glass hidden"></div>

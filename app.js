@@ -43,12 +43,68 @@ const SHIP_ICON = {
   mapping: { ship: { x: 0, y: 0, width: 40, height: 96, anchorY: 48, mask: true } },
 };
 
+// 船型徽章：圓底白色圖案，拉近時畫在船旁邊。順序也是圖例的順序
+const FG = '#fff'; // 徽章圖案的顏色
+const CLASS_BADGE = {
+  rescue: ['救援船', '#e11d48', // 醫療箱
+    `<path d="M19 16v-3.5h10V16" fill="none" stroke="${FG}" stroke-width="2.5"/><rect x="11" y="16" width="26" height="19" rx="3" fill="${FG}"/>` +
+    '<rect x="22" y="18.5" width="4" height="14" fill="#e11d48"/><rect x="17" y="23.5" width="14" height="4" fill="#e11d48"/>'],
+  government: ['公務／執法船', '#1e3a8a', // 警徽
+    `<path d="M24 9l11 4v9c0 8-5 13-11 16-6-3-11-8-11-16v-9z" fill="${FG}"/>` +
+    '<path d="M24 16l2.1 4.4 4.8.6-3.5 3.3.9 4.8-4.3-2.3-4.3 2.3.9-4.8-3.5-3.3 4.8-.6z" fill="#1e3a8a"/>'],
+  fishing: ['漁船', '#0284c7', // 魚
+    `<ellipse cx="21" cy="24" rx="11" ry="7" fill="${FG}"/><path d="M30 24l8-7v14z" fill="${FG}"/><circle cx="15.5" cy="22.5" r="1.8" fill="#0284c7"/>`],
+  cargo: ['貨輪', '#b45309', // 貨櫃
+    `<rect x="10" y="13" width="28" height="10" fill="${FG}"/><rect x="10" y="25" width="28" height="10" fill="${FG}"/>` +
+    '<path d="M16 13v10M22 13v10M28 13v10M34 13v10M16 25v10M22 25v10M28 25v10M34 25v10" stroke="#b45309" stroke-width="1.6"/>'],
+  tanker: ['油輪', '#475569', // 油桶
+    `<rect x="15" y="11" width="18" height="26" rx="3" fill="${FG}"/><path d="M15 18h18M15 30h18" stroke="#475569" stroke-width="2.2"/>`],
+  passenger: ['客船', '#be185d', // 很多人
+    `<circle cx="15" cy="18" r="3.6" fill="${FG}"/><circle cx="33" cy="18" r="3.6" fill="${FG}"/><circle cx="24" cy="15" r="4.2" fill="${FG}"/>` +
+    `<path d="M9 33a6 6 0 0 1 12 0zM27 33a6 6 0 0 1 12 0z" fill="${FG}"/><path d="M17 35a7 7.5 0 0 1 14 0z" fill="${FG}"/>`],
+  tug: ['拖船', '#4d7c0f', // 鉤子
+    `<circle cx="24" cy="12" r="3.2" fill="none" stroke="${FG}" stroke-width="2.6"/>` +
+    `<path d="M24 15v13a6.5 6.5 0 1 1-11-4.7" fill="none" stroke="${FG}" stroke-width="3.4" stroke-linecap="round"/><path d="M10 25l3-5 3.8 4.3z" fill="${FG}"/>`],
+  pilot: ['引水船', '#2563eb', // 水滴
+    `<path d="M24 10c0 0-9 11-9 17a9 9 0 0 0 18 0c0-6-9-17-9-17z" fill="${FG}"/>`],
+  service: ['作業船', '#0f766e', // 扳手
+    `<path d="M16 33l11-11" stroke="${FG}" stroke-width="4.5" stroke-linecap="round"/>` +
+    `<path d="M30.5 12.5a6.5 6.5 0 1 0 5 5l-4 1.5-2.5-2.5z" fill="${FG}"/>`],
+  pleasure: ['遊艇／帆船', '#7e22ce', // 酒杯
+    `<path d="M16 11h16c0 8-3.5 13-8 13s-8-5-8-13z" fill="${FG}"/><path d="M24 24v10M18 35h12" stroke="${FG}" stroke-width="2.6" stroke-linecap="round"/>`],
+  other: ['其他船型', '#6b7280',
+    `<text x="24" y="29" text-anchor="middle" font-size="13" font-weight="700" fill="${FG}" font-family='${CJK_FONT.replace(/"/g, '')}'>其他</text>`],
+  unknown: ['未知船型', '#374151',
+    `<text x="24" y="33" text-anchor="middle" font-size="26" font-weight="700" fill="${FG}" font-family="sans-serif">?</text>`],
+};
+const BADGE_KEYS = Object.keys(CLASS_BADGE);
+
+function badgeInner(key) {
+  const [, bg, glyph] = CLASS_BADGE[key];
+  return `<circle cx="24" cy="24" r="22" fill="${bg}" stroke="#fff" stroke-width="2"/>${glyph}`;
+}
+
+function badgeUrl(key) {
+  // 圖例用的單一徽章
+  return 'data:image/svg+xml;charset=utf-8,' +
+    encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">${badgeInner(key)}</svg>`);
+}
+
+const BADGE_ICON = {
+  atlas: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${48 * BADGE_KEYS.length}" height="48">` +
+    BADGE_KEYS.map((k, i) => `<g transform="translate(${48 * i},0)">${badgeInner(k)}</g>`).join('') + '</svg>'),
+  mapping: Object.fromEntries(BADGE_KEYS.map((k, i) => [k, { x: 48 * i, y: 0, width: 48, height: 48 }])),
+};
+const BADGE_ZOOM = 10; // 拉近到這一級以上，每艘船都畫徽章；拉遠時只畫救援船與點選中的船
+
 const $ = (id) => document.getElementById(id);
 const state = {
   t: 0, playing: false, speed: 60, showPred: true, showIdle: true, showCone: true,
   types: new Set(Object.keys(TYPE_LABEL)), simOnly: false, selected: null, focus: null,
   rescue: null, // 救援示範進行中：{ mode: 'hungarian' | 'greedy', animStart }
   highOnly: true, // 警示列表預設只列高優先（模擬情境一律列出），一般警示收起來
+  byRisk: false,  // 警示列表依風險分數排序（預設依時間，最新的在上）
   detail: false,  // 船舶卡片：簡易說明／各預測器與權重
 };
 let D, map, overlay, t0ms, trips = { all: [], moving: [] }, alerts = [], listKey = '', lastFrame = null;
@@ -306,7 +362,10 @@ function seaMask() {
   if (!seaMaskCache) {
     const [x0, y0, x1, y1] = D.meta.bounds, m = 3;
     const outer = [[x0 - m, y0 - m], [x1 + m, y0 - m], [x1 + m, y1 + m], [x0 - m, y1 + m], [x0 - m, y0 - m]];
-    seaMaskCache = D.land?.length ? [{ polygon: [outer, ...D.land] }] : [];
+    // 重複的洞會讓三角化失敗、整片遮罩失效（舊版匯出的資料可能有重複的小島）
+    const seen = new Set();
+    const holes = (D.land || []).filter((r) => { const k = JSON.stringify(r); return !seen.has(k) && seen.add(k); });
+    seaMaskCache = holes.length ? [{ polygon: [outer, ...holes] }] : [];
   }
   return seaMaskCache;
 }
@@ -333,6 +392,8 @@ function layers() {
   }
   updateKpis(vessels);
   const rescueVessels = vessels.filter((v) => v.trip.rescue);
+  const badged = map.getZoom() >= BADGE_ZOOM ? vessels
+    : vessels.filter((v) => v.trip.rescue || v.trip.m === state.focus);
 
   // 點選中的船：畫融合與四個預測器的預測，並更新資訊卡
   const focusVessel = state.focus ? vessels.find((v) => v.trip.m === state.focus) : null;
@@ -477,7 +538,7 @@ function layers() {
     }),
     new deck.TextLayer({
       id: 'rescue-labels', data: rescueVessels, getPosition: (d) => d.pos, getText: () => '救援',
-      getColor: COLOR.rescue, getSize: 11, getPixelOffset: [0, -24], fontFamily: CJK_FONT, fontWeight: 700,
+      getColor: COLOR.rescue, getSize: 11, getPixelOffset: [-14, -24], fontFamily: CJK_FONT, fontWeight: 700,
       characterSet: 'auto', background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [4, 1],
       updateTriggers: { getBackgroundColor: theme.key },
     }),
@@ -487,6 +548,11 @@ function layers() {
       getSize: (d) => shipSize(d.trip), sizeScale: shipScale(),
       getColor: (d) => vesselColor(d.trip, theme),
       updateTriggers: { getColor: theme.key },
+    }),
+    new deck.IconLayer({
+      id: 'class-badges', data: badged, iconAtlas: BADGE_ICON.atlas, iconMapping: BADGE_ICON.mapping,
+      getIcon: (d) => d.trip.cls, getPosition: (d) => d.pos, getSize: 19, sizeUnits: 'pixels',
+      getPixelOffset: [15, -15],
     }),
     new deck.ScatterplotLayer({
       id: 'focus-ring', data: focusVessel ? [focusVessel] : [], getPosition: (d) => d.pos,
@@ -584,14 +650,27 @@ function alongPath(path, frac) {
   return path[path.length - 1];
 }
 
+// 「也派待命救援船」用另一個展示情境（附近有待命救援船的時間與海域），其餘兩種模式用同一個
+function rescueScene(mode) {
+  return mode === 'standby' ? D.rescue?.showcase_rescue : D.rescue?.showcase;
+}
+
+function rescuePlan(R, mode) {
+  return mode === 'standby' ? R.with_rescue.hungarian : R[mode];
+}
+
+function rescueResponders(R, mode) {
+  return mode === 'standby' ? [...R.responders, ...R.with_rescue.standby] : R.responders;
+}
+
 function rescueLayers() {
   const empty = { routes: [], responders: [], distress: [], dots: [], labels: [] };
-  const R = state.rescue && D.rescue?.showcase;
+  const R = state.rescue && rescueScene(state.rescue.mode);
   if (!R) return empty;
-  const plan = R[state.rescue.mode];
+  const plan = rescuePlan(R, state.rescue.mode);
   const maxMin = Math.max(...plan.assignments.map((a) => a.minutes));
   const f = Math.min(1, (performance.now() - state.rescue.animStart) / 1000 / RESCUE_ANIM_S);
-  const out = { ...empty, responders: R.responders.map((r) => ({ pos: [r.lon, r.lat] })) };
+  const out = { ...empty, responders: rescueResponders(R, state.rescue.mode).map((r) => ({ pos: [r.lon, r.lat] })) };
   for (const a of plan.assignments) {
     const color = RESCUE_COLORS[a.distress % RESCUE_COLORS.length];
     out.routes.push({ path: a.path, color });
@@ -612,7 +691,7 @@ function rescueLayers() {
 }
 
 function startRescue(mode = 'hungarian', instant = false) {
-  const R = D.rescue?.showcase;
+  const R = rescueScene(mode);
   if (!R) return;
   state.selected = null;
   setFocus(null);
@@ -621,7 +700,7 @@ function startRescue(mode = 'hungarian', instant = false) {
   state.rescue = { mode, animStart: performance.now() };
   document.body.classList.add('rescue-on');
   $('rescue-btn').classList.add('on');
-  const pts = [...R.distress, ...R.responders];
+  const pts = [...R.distress, ...rescueResponders(R, mode)];
   const lons = pts.map((p) => p.lon), lats = pts.map((p) => p.lat);
   map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
     { padding: viewPadding(), duration: instant ? 0 : 1500, maxZoom: 11 }); // 從分享連結開啟時直接定位
@@ -640,22 +719,28 @@ function stopRescue() {
 }
 
 function setRescueMode(mode) {
+  if (rescueScene(mode) !== rescueScene(state.rescue.mode)) { startRescue(mode); return; } // 換情境：時間與地圖範圍都要換
   state.rescue.mode = mode;
   state.rescue.animStart = performance.now();
   renderRescueCard();
 }
 
 function renderRescueCard() {
-  const R = D.rescue.showcase, S = D.rescue.summary, m = state.rescue.mode;
-  const h = R.hungarian, g = R.greedy, cur = R[m];
+  const S = D.rescue.summary, m = state.rescue.mode, R = rescueScene(m);
+  const h = R.hungarian, g = R.greedy, cur = rescuePlan(R, m), W = S.with_rescue;
   const less = (a, b) => Math.round((1 - a / b) * 100);
   let html = '<div class="f-head"><span>救援調度示範<span class="badge sim">模擬情境</span></span>' +
     '<button id="r-close" title="結束示範（Esc）">✕</button></div>';
-  html += `<div class="f-sub">${clock(R.t)}，同一海域 ${R.distress.length} 艘船同時求救（假設情境）；` +
-    `附近 ${R.responders.length} 艘正在航行的船可以支援（白圈）。</div>`;
+  html += m === 'standby'
+    ? `<div class="f-sub">${clock(R.t)}，另一個情境：${R.distress.length} 艘船同時求救（假設情境）；除了附近 ` +
+      `${R.responders.length} 艘正在航行的船，再加上 50 公里內 ${R.with_rescue.standby.length} 艘待命的救援船（白圈）。</div>`
+    : `<div class="f-sub">${clock(R.t)}，同一海域 ${R.distress.length} 艘船同時求救（假設情境）；` +
+      `附近 ${R.responders.length} 艘正在航行的船可以支援（白圈）。</div>`;
   html += '<div class="r-modes">' +
     `<button data-m="hungarian" class="${m === 'hungarian' ? 'on' : ''}">最佳指派（Hungarian）</button>` +
-    `<button data-m="greedy" class="${m === 'greedy' ? 'on' : ''}">最近的船先去</button></div>`;
+    `<button data-m="greedy" class="${m === 'greedy' ? 'on' : ''}">最近的船先去</button>` +
+    (D.rescue.showcase_rescue ? `<button data-m="standby" class="${m === 'standby' ? 'on' : ''}">也派待命救援船</button>` : '') +
+    '</div>';
   html += '<table class="f-weights"><tr><th>求救點</th><th>派遣船</th><th>航程</th><th>抵達</th></tr>' +
     cur.assignments.map((a) => {
       const c = RESCUE_COLORS[a.distress % RESCUE_COLORS.length];
@@ -663,14 +748,24 @@ function renderRescueCard() {
         `<td>${esc(vesselName(a.responder))}${vinfo(a.responder).key === 'rescue' ? '<span class="badge rescue">救援船</span>' : ''}</td>` +
         `<td>${a.km.toFixed(1)} km</td><td>${Math.round(a.minutes)} 分</td></tr>`;
     }).join('') + '</table>';
-  html += '<div class="r-compare">' +
-    `<div>總抵達時間：最佳指派 <b>${Math.round(h.total_min)}</b> 分，最近的船先去 <b>${Math.round(g.total_min)}</b> 分` +
-    `（少 ${less(h.total_min, g.total_min)}%）</div>` +
-    `<div>最晚抵達：<b>${Math.round(h.max_min)}</b> 分 對 <b>${Math.round(g.max_min)}</b> 分</div></div>`;
-  html += '<p class="note">航線是海陸網格上的最短路徑（Dijkstra，避開陸地與島嶼），航速取各船當下航速（8～20 節）。' +
-    `全天 ${S.scenarios} 個模擬情境中，最佳指派平均省 ${S.total_saving_pct}% 總抵達時間，` +
-    `${Math.round(S.improved_share * 100)}% 的情境有改善；但有 ${Math.round(S.max_worse_share * 100)}% 的情境，` +
-    '最晚抵達的船反而較慢，這是只最佳化總時間的取捨。</p>';
+  if (m === 'standby') {
+    html += '<div class="r-compare">' +
+      `<div>總抵達時間：也派救援船 <b>${Math.round(cur.total_min)}</b> 分，只派航行中的船 <b>${Math.round(h.total_min)}</b> 分` +
+      `（少 ${less(cur.total_min, h.total_min)}%）</div>` +
+      `<div>最晚抵達：<b>${Math.round(cur.max_min)}</b> 分 對 <b>${Math.round(h.max_min)}</b> 分</div></div>`;
+    html += `<p class="note">救援船不論當下航速都可出動，出動航速假設為 ${W.speed_kn} 節（實際依船而異）；兩者都用最佳指派。` +
+      `全天有 ${W.scenarios} 個情境附近有待命救援船，平均總抵達時間 ${W.total_min_without} → ${W.total_min} 分` +
+      `（少 ${W.total_saving_pct}%），${Math.round(W.rescue_assignment_share * 100)}% 的派遣由救援船擔任。</p>`;
+  } else {
+    html += '<div class="r-compare">' +
+      `<div>總抵達時間：最佳指派 <b>${Math.round(h.total_min)}</b> 分，最近的船先去 <b>${Math.round(g.total_min)}</b> 分` +
+      `（少 ${less(h.total_min, g.total_min)}%）</div>` +
+      `<div>最晚抵達：<b>${Math.round(h.max_min)}</b> 分 對 <b>${Math.round(g.max_min)}</b> 分</div></div>`;
+    html += '<p class="note">航線是海陸網格上的最短路徑（Dijkstra，避開陸地與島嶼），航速取各船當下航速（8～20 節）。' +
+      `全天 ${S.scenarios} 個模擬情境中，最佳指派平均省 ${S.total_saving_pct}% 總抵達時間，` +
+      `${Math.round(S.improved_share * 100)}% 的情境有改善；但有 ${Math.round(S.max_worse_share * 100)}% 的情境，` +
+      '最晚抵達的船反而較慢，這是只最佳化總時間的取捨。</p>';
+  }
   html += '<div class="r-actions"><button id="r-replay">▶ 重播出發動畫</button></div>';
   const card = $('rescue');
   card.innerHTML = html;
@@ -867,13 +962,72 @@ function renderFilters() {
     h.onclick = () => { state.highOnly = !state.highOnly; refresh(); };
     box.appendChild(h);
   }
+  if (alerts.some((a) => a.d?.risk != null)) {
+    const r = document.createElement('button');
+    r.className = 'chip' + (state.byRisk ? ' on' : '');
+    r.textContent = state.byRisk ? '依風險排序' : '依時間排序';
+    r.title = '切換排序：依風險分數（高的在上）或依時間（新的在上）';
+    r.onclick = () => { state.byRisk = !state.byRisk; refresh(); };
+    box.appendChild(r);
+  }
+}
+
+// ---------- 人工檢視 ----------
+// 點選警示後可標記「值得關注／誤報／不確定」（或按 1／2／3），存在這台瀏覽器裡，可匯出 CSV；
+// python -m seaeye review 讀 CSV 算出各類警示的精確率
+const REVIEW_KEY = 'seaeye-review';
+const REVIEW_LABEL = { yes: '值得關注', no: '誤報', unsure: '不確定' };
+const REVIEW_MARK = { yes: '✓', no: '✗', unsure: '?' };
+let reviews = {};
+try { reviews = JSON.parse(storeGet(REVIEW_KEY) || '{}') || {}; } catch { reviews = {}; }
+
+function reviewKey(a) {
+  return `${a.type}|${a.m}|${a.td}`;
+}
+
+function setReview(a, value) {
+  const k = reviewKey(a);
+  if (reviews[k] === value) delete reviews[k]; else reviews[k] = value; // 再按一次取消
+  storeSet(REVIEW_KEY, JSON.stringify(reviews));
+  renderAlertList(true);
+  renderReviewBar();
+}
+
+function renderReviewBar() {
+  const high = alerts.filter((a) => a.sev === 'high' && !a.sim);
+  const done = high.filter((a) => reviews[reviewKey(a)]).length;
+  const total = Object.keys(reviews).length;
+  $('review-bar').innerHTML = `人工檢視：高優先 ${done}／${high.length} 則已標記` +
+    (total ? `（共 ${total} 則）<button id="review-export" class="link-btn">匯出 CSV</button>` : '・點選警示後按 1／2／3 標記');
+  if (total) $('review-export').onclick = exportReviews;
+}
+
+function exportReviews() {
+  const rows = [['type', 'mmsi', 'name', 'vessel_class', 'detected_utc', 'severity', 'risk', 'simulated', 'review']];
+  for (const a of alerts) {
+    const r = reviews[reviewKey(a)];
+    if (!r) continue;
+    const t = new Date(t0ms + a.td * 1000).toISOString().slice(0, 19) + 'Z';
+    rows.push([a.type, a.m, vesselName(a.m), a.d?.vessel_class || '', t, a.sev, a.d?.risk ?? '', a.sim ? 1 : 0, r]);
+  }
+  // 開頭的 BOM 讓 Excel 正確讀中文
+  const csv = '\ufeff' + rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = Object.assign(document.createElement('a'), { href: url, download: `seaeye-review-${D.meta.t0.slice(0, 10)}.csv` });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function riskLevel(score) {
+  return score >= 70 ? 'r-hi' : score >= 45 ? 'r-mid' : 'r-lo';
 }
 
 function renderAlertList(force) {
   const t = state.t;
   const shown = visibleAlerts().filter((a) => a.td <= t).reverse();
+  if (state.byRisk) shown.sort((a, b) => (b.d?.risk ?? 0) - (a.d?.risk ?? 0) || b.td - a.td);
   // 訊號中斷的卡片內容會隨時間變化（持續中 → 已恢復），每分鐘重畫一次
-  const key = shown.length + '|' + (state.selected ? state.selected.td + state.selected.m : '') +
+  const key = shown.length + '|' + state.byRisk + '|' + (state.selected ? state.selected.td + state.selected.m : '') +
     '|' + Math.floor(t / 60) * shown.some((a) => a.type === 'ais_gap' && t < a.te + 60);
   if (!force && key === listKey) return;
   const prevCount = Number(listKey.split('|')[0] || 0);
@@ -891,8 +1045,15 @@ function renderAlertList(force) {
       `<div class="a-head"><span>${TYPE_LABEL[a.type]}` +
       (a.sim ? '<span class="badge sim">模擬情境</span>' : '') +
       (a.sev === 'high' ? '<span class="badge high">高優先</span>' : '<span class="badge normal">一般</span>') +
-      `</span><span class="a-time">${clock(a.td)}</span></div>` +
-      `<div class="a-body"><b>${esc(vesselName(a.m))}</b> · ${esc(describe(a))}</div>`;
+      `</span><span class="a-time">${a.d?.risk != null ? `<span class="risk ${riskLevel(a.d.risk)}">風險 ${a.d.risk}</span>` : ''}` +
+      `${clock(a.td)}</span></div>` +
+      `<div class="a-body"><b>${esc(vesselName(a.m))}</b> · ${esc(describe(a))}</div>` +
+      (a.d?.risk_reasons?.length ? `<div class="a-risk">風險因素：${esc(a.d.risk_reasons.join('、'))}</div>` : '') +
+      (a === state.selected ? '<div class="a-review">' + Object.entries(REVIEW_LABEL).map(([k, label], n) =>
+        `<button data-r="${k}" class="${reviews[reviewKey(a)] === k ? 'on' : ''}">${n + 1} ${label}</button>`).join('') + '</div>' : '');
+    const mark = reviews[reviewKey(a)];
+    if (mark) li.querySelector('.a-head span').insertAdjacentHTML('beforeend', `<span class="badge review ${mark}" title="人工檢視：${REVIEW_LABEL[mark]}">${REVIEW_MARK[mark]}</span>`);
+    li.querySelectorAll('.a-review button').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); setReview(a, b.dataset.r); }));
     li.onclick = () => select(a);
     ol.appendChild(li);
   });
@@ -1144,6 +1305,16 @@ function setTheme(light, persist = true) {
 
 // ---------- 載入資料（顯示進度） ----------
 
+async function showVersion() {
+  // 網站上傳時寫入的 version.json；本機預覽沒有這個檔，改顯示資料匯出時間
+  let text = D.meta.exported_at ? `資料匯出：${D.meta.exported_at}（尚未上傳）` : '';
+  try {
+    const r = await fetch('version.json', { cache: 'no-cache' });
+    if (r.ok) text = `本版上傳：${(await r.json()).published_at}`;
+  } catch { /* 讀不到就維持匯出時間 */ }
+  $('version').textContent = text;
+}
+
 async function expectedSize() {
   // 匯出時記下的 data.json 大小（位元組）；讀不到就回傳 0，載入畫面改顯示動畫
   try {
@@ -1338,6 +1509,8 @@ function bindControls() {
     else if (e.code === 'KeyP') { state.showPred = !state.showPred; $('show-pred').checked = state.showPred; }
     else if (e.code === 'Escape') { stopTour(); stopRescue(); state.selected = null; setFocus(null); updateUrl(); }
     else if (e.code === 'KeyR') (state.rescue ? stopRescue() : startRescue());
+    else if (state.selected && ['Digit1', 'Digit2', 'Digit3'].includes(e.code))
+      setReview(state.selected, ['yes', 'no', 'unsure'][Number(e.code.slice(-1)) - 1]);
   });
 }
 
@@ -1353,7 +1526,12 @@ async function main() {
     return;
   }
   t0ms = Date.parse(D.meta.t0);
-  for (const d of D.trips) d.rescue = vinfo(d.m).key === 'rescue';
+  for (const d of D.trips) {
+    d.cls = CLASS_BADGE[vinfo(d.m).key] ? vinfo(d.m).key : 'unknown';
+    d.rescue = d.cls === 'rescue';
+  }
+  $('legend-classes').innerHTML = BADGE_KEYS.map((k) =>
+    `<span><img src="${badgeUrl(k)}" alt="">${CLASS_BADGE[k][0]}</span>`).join('');
   trips.all = D.trips;
   // 救援船即使整段低速（港內待命）也一直畫出來
   trips.moving = D.trips.filter((d) => d.mv || d.rescue);
@@ -1367,6 +1545,8 @@ async function main() {
   // 清理後的船舶總數（與構想書一致）；地圖上只畫航跡夠長、能做預測的船
   $('w-vessels').textContent = (Object.keys(D.vessels || {}).length || D.meta.vessels).toLocaleString('en-US');
   $('legend-cov').textContent = coverageText();
+  showVersion();
+  renderReviewBar();
   state.detail = storeGet(DETAIL_KEY) === '1';
   // 預測器數量依資料而定（有歷史航道圖時多一個 LANE）
   const names = D.meta.weight_methods.map((m) => METHOD_STYLE[m].label).join('、');
