@@ -1183,6 +1183,32 @@ function setPlaying(on) {
   $('play').textContent = state.playing ? '❚❚' : '▶';
 }
 
+const COLLAPSE_KEY = 'seaeye-collapsed';
+
+function setupCollapse() {
+  // 四個框（標題列、數據面板、圖例、播放列）各自收合；收合了哪些記在瀏覽器裡，下次開啟照舊
+  const saved = new Set((storeGet(COLLAPSE_KEY) || '').split(',').filter(Boolean));
+  document.querySelectorAll('.collapse-btn').forEach((b) => {
+    const box = b.dataset.box;
+    const apply = (on) => {
+      document.body.classList.toggle(`col-${box}`, on);
+      b.textContent = on ? '+' : '−';
+      b.title = on ? '展開' : '收合';
+      b.setAttribute('aria-expanded', String(!on));
+    };
+    apply(saved.has(box));
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const on = !document.body.classList.contains(`col-${box}`);
+      apply(on);
+      if (on) saved.add(box); else saved.delete(box);
+      storeSet(COLLAPSE_KEY, [...saved].join(','));
+      b.blur(); // 不然之後按空白鍵會再按一次這個按鈕
+    };
+  });
+  document.querySelector('.legend-title').onclick = () => document.querySelector('[data-box="legend"]').click();
+}
+
 function viewPadding() {
   // 右側面板、左上的船舶卡片與上下列會擋住地圖，置中時要扣掉
   // （卡片剛點選時可能還沒顯示、量不到寬度，所以用 CSS 設定的固定寬度 340）
@@ -1693,6 +1719,7 @@ function bindControls() {
   $('w-tour').onclick = () => closeWelcome(true);
   $('w-explore').onclick = () => closeWelcome(false);
   $('panel-toggle').onclick = () => document.body.classList.toggle('panel-open');
+  setupCollapse();
   $('ticks').onclick = jumpOnTimeline;
   $('metrics-toggle').onclick = () => {
     const table = $('metrics-section').classList.toggle('show-table');

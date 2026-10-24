@@ -298,12 +298,36 @@ body.recording.rec-panel #panel { display: block; }
   text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg); pointer-events: none;
 }
 
+/* ---------- 四個框右上角的收合按鈕（電腦版；收合狀態記在瀏覽器裡） ---------- */
+.collapse-btn {
+  position: absolute; top: -9px; right: -9px; z-index: 3; width: 22px; height: 22px; padding: 0;
+  border-radius: 50%; border: 1px solid var(--line); background: var(--raised); color: var(--text);
+  font: 700 15px/20px system-ui, sans-serif; cursor: pointer; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.collapse-btn:hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.legend-title { display: none; }
+/* 收合後：標題列只留名稱與時鐘、數據面板只留三個數字、圖例只留標題、播放列只留播放鍵。
+   錄影模式照腳本顯示，不受收合影響 */
+@media (min-width: 901px) {
+  body.col-topbar:not(.recording) #topbar { right: auto; }
+  body.col-topbar:not(.recording) .sub,
+  body.col-topbar:not(.recording) .top-actions,
+  body.col-topbar:not(.recording) #source { display: none; }
+  body.col-panel:not(.recording) #panel { bottom: auto; }
+  body.col-panel:not(.recording) #panel > section:not(.kpis) { display: none; }
+  body.col-legend:not(.recording) #legend > :not(.legend-title):not(.collapse-btn) { display: none; }
+  body.col-legend:not(.recording) .legend-title { display: block; cursor: pointer; font-weight: 600; padding-right: 8px; }
+  body.col-controls:not(.recording) #controls { right: auto; }
+  body.col-controls:not(.recording) #controls > :not(#play):not(.collapse-btn),
+  body.col-controls:not(.recording) #hint { display: none; }
+}
+
 /* ---------- 手機與窄螢幕：地圖為主，數據面板改成可收合的抽屜 ---------- */
 @media (max-width: 900px) {
   :root { --panel-w: 0px; }
   #topbar { top: 8px; left: 8px; right: 8px; padding: 8px 10px; flex-wrap: wrap; gap: 6px 10px; }
   .logo { font-size: 20px; letter-spacing: 2px; }
-  .sub, #hint, #legend, #source { display: none; }
+  .sub, #hint, #legend, #source, .collapse-btn { display: none; }
   #clock-time { font-size: 17px; }
   .top-actions { order: 3; width: 100%; }
   .search-wrap { flex: 1; }

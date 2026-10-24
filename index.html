@@ -24,6 +24,7 @@
   <div id="map"></div>
 
   <header id="topbar" class="glass">
+    <button class="collapse-btn" data-box="topbar" aria-label="收合／展開標題列"></button>
     <div class="brand">
       <span class="logo">海眼</span>
       <span class="sub">SeaEye · 衛星 AIS 船舶軌跡預測與異常航行預警</span>
@@ -44,6 +45,7 @@
   </header>
 
   <aside id="panel" class="glass">
+    <button class="collapse-btn" data-box="panel" aria-label="收合／展開數據面板"></button>
     <section class="kpis">
       <div class="kpi"><div class="kpi-value" id="kpi-moving">0</div><div class="kpi-label">航行中船舶</div></div>
       <div class="kpi"><div class="kpi-value" id="kpi-active">0</div><div class="kpi-label">進行中警示</div></div>
@@ -70,6 +72,8 @@
   <div id="rescue" class="glass hidden"></div>
 
   <div id="legend" class="glass">
+    <button class="collapse-btn" data-box="legend" aria-label="收合／展開圖例"></button>
+    <div class="legend-title">圖例</div>
     <div><i class="ship" style="background:#2dd4bf"></i>航行中（船頭＝航向）</div>
     <div><i class="ship small" style="background:#64748b"></i>停泊／低速</div>
     <div><i class="ship" style="background:#fbbf24"></i>模擬注入的船</div>
@@ -87,6 +91,7 @@
   </div>
 
   <footer id="controls" class="glass">
+    <button class="collapse-btn" data-box="controls" aria-label="收合／展開播放列"></button>
     <button id="play" title="播放／暫停（空白鍵）">▶</button>
     <select id="speed" title="播放速度">
       <option value="30">30×</option>
