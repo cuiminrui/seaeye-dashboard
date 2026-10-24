@@ -74,7 +74,7 @@
     <div><i class="ship small" style="background:#64748b"></i>停泊／低速</div>
     <div><i class="ship" style="background:#fbbf24"></i>模擬注入的船</div>
     <div><i class="ship rescue" style="background:#ff40a0"></i>救援船（<span id="legend-rescue-n">0</span> 艘，搜尋「救援」可列出）</div>
-    <div><i class="swatch dot" style="background:#38bdf8"></i>融合預測（5／15／30 分）</div>
+    <div><i class="swatch dot" style="background:#38bdf8"></i>融合預測（5／15／30 分，可選到 60 分）</div>
     <div><i class="swatch past"></i>之前的預測（15 分鐘前預測的位置，對照實際航跡）</div>
     <div><i class="swatch cone"></i>90% 不確定範圍（實測涵蓋 <span id="legend-cov">—</span>）</div>
     <div class="muted" id="legend-methods">點選船舶：看簡易說明，或比較融合與各預測器</div>
@@ -106,13 +106,14 @@
     <label class="opt"><input type="checkbox" id="show-pred" checked> 預測</label>
     <label class="opt"><input type="checkbox" id="show-cone" checked> 範圍</label>
     <label class="opt" title="藍色虛線：15 分鐘前預測船會在的位置，和實際航跡對照"><input type="checkbox" id="show-past" checked> 預測對照</label>
+    <label class="opt" title="預測畫到 30 分鐘或 60 分鐘後">預測到 <select id="max-h"><option value="30">30 分</option><option value="60">60 分</option></select></label>
     <label class="opt"><input type="checkbox" id="show-idle" checked> 停泊船</label>
   </footer>
 
   <div id="source"></div>
   <div id="version"></div>
   <div id="caption" class="glass hidden"></div>
-  <div id="hint">G 自動導覽 · R 救援示範 · 空白鍵 播放／暫停 · ← → 切換警示 · 點船比較預測、Esc 取消 · H 隱藏介面（錄影用）</div>
+  <div id="hint">G 自動導覽 · R 救援示範 · 空白鍵 播放／暫停 · ← → 切換警示 · 點船比較預測、Esc 取消 · H 隱藏介面 · V 錄影模式</div>
   <div id="toast" class="glass hidden"></div>
 
   <div id="welcome" class="hidden" role="dialog" aria-modal="true" aria-labelledby="w-title">
@@ -121,18 +122,19 @@
       <h1 id="w-title">衛星 AIS 船舶軌跡預測與異常航行預警</h1>
       <p class="w-sub">2026 衛星數位應用創新大賽・實作組作品</p>
       <ul>
-        <li>這是 <b id="w-date">2023-06-01</b> 美國南加州外海一整天、<b id="w-vessels">1,309</b> 艘船的<b>真實 AIS 資料</b>回放（NOAA 公開資料）。</li>
-        <li>系統即時預測每艘船 <b>5／15／30 分鐘後</b>的位置（藍線與淡藍扇形），並在船<b>偏航</b>或<b>疑似關閉 AIS</b> 時發出警示。</li>
-        <li>標示 <span class="badge sim">模擬情境</span> 的事件，是刻意注入真實航跡的測試案例，用來驗證偵測能力，不是真實發生的事。</li>
-        <li>點任何一艘船，先看白話的簡易說明；按「看詳細」可以比較融合結果與<span id="w-methods">各預測器</span>，並對照「15 分鐘前的預測」和船實際到達的位置。</li>
+        <li>這是 <b id="w-date">2023-06-01</b> 美國南加州外海一整天、<b id="w-vessels">1,309</b> 艘船的<b>真實 AIS 資料</b>回放（NOAA 公開資料）；時鐘下方的選單可切換 <b>6/1～6/7</b>。</li>
+        <li>系統即時預測每艘船 <b>5／15／30 分鐘後</b>的位置（藍點與淡藍扇形）。<b>藍色虛線</b>是 15 分鐘前預測的位置，和青綠色的實際航跡對照，就看得出準不準。</li>
+        <li>船身上的圖案代表船型：貨櫃＝貨輪、魚＝漁船、醫療箱＝救援船（桃紅色船身）、警徽＝執法船……圖例最下方可展開對照。</li>
+        <li>船<b>偏航</b>、<b>疑似關閉 AIS</b> 或在指定海域<b>異常滯留</b>時發出警示，依<b>風險分數</b>排序並寫出理由。標示 <span class="badge sim">模擬情境</span> 的是刻意注入真實航跡的測試案例，不是真實發生的事。</li>
+        <li>點任何一艘船，先看簡易說明；按「看詳細」可以比較融合結果與<span id="w-methods">各預測器</span>的路線和權重。</li>
         <li>訊號中斷的船會在最後位置留下<b>淡色船影</b>；多艘船同時失聯時，系統研判是岸基接收站斷訊，不當成可疑行為。</li>
-        <li>按下方的 <b>🚑 救援</b>，看多艘船同時求救時，系統如何指派附近的船並規劃避開陸地的航線（模擬情境）。</li>
+        <li>按下方的 <b>🚑 救援</b>，看多艘船同時求救時，系統如何指派附近的船（也可加入港內待命的救援船）並規劃避開陸地的航線（模擬情境）。</li>
       </ul>
       <div class="w-actions">
         <button id="w-tour" class="primary">▶ 開始導覽（約 4 分鐘）</button>
         <button id="w-explore">自己探索</button>
       </div>
-      <p class="w-note">之後可以按右上角的「？」再看一次說明。建議用電腦瀏覽。</p>
+      <p class="w-note">之後可以按右上角的「？」再看一次說明。建議用電腦瀏覽；按 V 可播放約 4 分半的錄影版導覽。</p>
     </div>
   </div>
 

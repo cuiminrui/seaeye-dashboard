@@ -105,6 +105,7 @@ const GLYPH_SHIP_SCALE = 1.35; // 畫圖案時船身放大一點，圖案才看�
 const $ = (id) => document.getElementById(id);
 const state = {
   t: 0, playing: false, speed: 60, showPred: true, showIdle: true, showCone: true, showPast: true,
+  maxH: 30, // 預測畫到幾分鐘（30 或 60）
   types: new Set(Object.keys(TYPE_LABEL)), simOnly: false, selected: null, focus: null,
   rescue: null, // 救援示範進行中：{ mode: 'hungarian' | 'greedy', animStart }
   highOnly: true, // 警示列表預設只列高優先（模擬情境一律列出），一般警示收起來
@@ -221,8 +222,13 @@ function predictionAt(mmsi, t) {
   if (!pr) return null;
   const i = lowerBound(pr.t, t);
   if (i < 0 || t - pr.t[i] > PRED_FRESH_S) return null;
-  const n = D.meta.horizons.length;
-  return { pts: pr.p.slice(i * n, i * n + n), r: pr.r.slice(i * n, i * n + n) };
+  const n = D.meta.horizons.length, k = shownHorizons();
+  return { pts: pr.p.slice(i * n, i * n + k), r: pr.r.slice(i * n, i * n + k) };
+}
+
+function shownHorizons() {
+  // 畫幾個時距：預設到 30 分鐘，下方「預測到」選 60 分鐘時才畫 60 分鐘的預測
+  return D.meta.horizons.filter((h) => h <= state.maxH).length || D.meta.horizons.length;
 }
 
 function conePolygon(origin, pts, radii) {
@@ -304,7 +310,7 @@ function fullPredictionAt(mmsi, t) {
   const n = D.meta.horizons.length, methods = D.meta.methods, nw = D.meta.weight_methods.length;
   return {
     idx: i,
-    pts: methods.map((m, k) => ({ m, pts: D.meta.horizons.map((_, j) => d.p[(i * methods.length + k) * n + j]) })),
+    pts: methods.map((m, k) => ({ m, pts: D.meta.horizons.slice(0, shownHorizons()).map((_, j) => d.p[(i * methods.length + k) * n + j]) })),
     w: D.meta.horizons.map((_, j) => d.w.slice((i * n + j) * nw, (i * n + j) * nw + nw)),
   };
 }
@@ -316,7 +322,7 @@ async function loadVessel(mmsi) {
   vesselCache.set(mmsi, 'loading');
   try {
     const r = await fetch(`${DAY_BASE}vessels/${mmsi}.json`, { cache: 'no-cache' }); // 有更新才重新下載
-    vesselCache.set(mmsi, r.ok ? await r.json() : null); // 停泊船沒有預測檔
+    vesselCache.set(mmsi, r.ok ? decodeTimes(await r.json()) : null); // 停泊船沒有預測檔
   } catch {
     vesselCache.set(mmsi, null);
   }
@@ -446,7 +452,8 @@ function layers() {
   const rescue = rescueLayers();
   // 之前的預測軌跡：航行中的船（點選中的船一定畫），救援示範時收起來
   const pastAll = state.showPast && !state.rescue
-    ? vessels.filter((v) => v.trip.mv || v === focusVessel).map((v) => pastPredictions(v.trip, t)) : [];
+    ? vessels.filter((v) => (state.pastFocusOnly ? v === focusVessel : v.trip.mv || v === focusVessel))
+      .map((v) => pastPredictions(v.trip, t)) : [];
   const past = pastAll.flatMap((x) => x.paths), pastGaps = pastAll.map((x) => x.gap).filter(Boolean);
   const predLines = [], predDots = [], cones = [];
   // 拉遠時每艘船都畫扇形會糊成一片，只畫點選中的船；拉近到 9.5 級以上才全部畫
@@ -957,7 +964,8 @@ function renderMetrics() {
   // 預設顯示長條圖（一眼看出融合最短），點「看完整表格」切換
   const maxAde = Math.max(...rows.map((r) => r.ADE));
   // 先用一句白話講結論，再放長條圖
-  const last = `${D.meta.horizons[D.meta.horizons.length - 1]} 分鐘`, first = `${D.meta.horizons[0]} 分鐘`;
+  const mh = D.meta.metric_horizons || D.meta.horizons;
+  const last = `${mh[mh.length - 1]} 分鐘`, first = `${mh[0]} 分鐘`;
   const plain = cv && fu && fu[last] != null
     ? `<div class="plain">系統預測船 <b>${last}後</b>的位置，平均差 <b>${(fu[last] / 1000).toFixed(1)} 公里</b>` +
       `（${first}後約 ${Math.round(fu[first]).toLocaleString('en-US')} 公尺）；比「照目前速度直線走」準 <b>${gain}%</b>。</div>`
@@ -1305,6 +1313,7 @@ function applyUrl() {
     setTime(h * 3600 + mi * 60 - ((t0ms / 1000) % 86400));
     return true;
   };
+  if (p.get('record')) { startRecording(); return true; }
   if (p.get('rescue') && D.rescue?.showcase) { startRescue('hungarian', true); return true; }
   const ev = Number(p.get('event'));
   if (ev && simList()[ev - 1]) {
@@ -1478,12 +1487,157 @@ function setCaption(text) {
   document.body.classList.toggle('touring', !!text);
 }
 
+// ---------- 錄影模式 ----------
+// 按 V（或網址加 ?record=1）依固定腳本播放約 4 分半，給錄製實作影片用：介面收起來，只留地圖與字幕，
+// 每一段用實際秒數推進，錄幾次長度都一樣。要看的船與時刻從資料挑（只用 6/1，其他日期會先切回 6/1）。
+const rec = { on: false, i: -1, start: 0, scenes: [] };
+
+function movingAt(t) {
+  return trips.moving.filter((d) => d.mv).map((trip) => ({ trip, at: positionAt(trip, t) })).filter((v) => v.at);
+}
+
+function pickFocusShip(t, center) {
+  // 靠近畫面中心、正在航行、此刻有預測的貨輪或油輪（沒有就任何航行中的船）
+  const ok = movingAt(t).filter((v) => (v.at.sog ?? 0) >= 6 && predictionAt(v.trip.m, t));
+  const big = ok.filter((v) => ['cargo', 'tanker'].includes(v.trip.cls));
+  const pool = big.length ? big : ok;
+  pool.sort((a, b) => distanceM(a.at.pos, center) - distanceM(b.at.pos, center));
+  return pool[0] || null;
+}
+
+function pickPastExample() {
+  // 「之前的預測」看得出差距、又不至於離譜的一刻：航行中的貨輪或油輪（線條平順），
+  // 預測虛線夠長、目前誤差 0.5～2 公里裡最大的。客船、海釣船常繞來繞去，虛線會變成鋸齒
+  let best = null;
+  for (let t = 6 * 3600; t <= 20 * 3600; t += 1800) {
+    for (const v of movingAt(t)) {
+      if (!['cargo', 'tanker'].includes(v.trip.cls) || (v.at.sog ?? 0) < 8) continue;
+      const { paths, gap } = pastPredictions(v.trip, t);
+      if (!gap || !paths.length || paths[0].path.length < 12) continue;
+      const e = distanceM(gap.predicted, gap.actual);
+      if (e >= 500 && e <= 2000 && (!best || e > best.e)) best = { t, m: v.trip.m, pos: v.at.pos, e };
+    }
+  }
+  return best;
+}
+
+function recScenes() {
+  const center = D.meta.center, overview = [-118.3, 33.62];
+  const tShip = 9 * 3600, ship = pickFocusShip(tShip, overview), past = pickPastExample();
+  const sims = simList(), dev = sims.find((a) => a.type === 'deviation'), gap = sims.find((a) => a.type === 'ais_gap');
+  const loiter = alerts.find((a) => a.type === 'loiter');
+  const tOut = 8 * 3600 + 15 * 60, outage = gapsAt(tOut).filter((g) => g.k === 'outage');
+  const md = D.meta.multiday;
+  const pct = (v) => `${(v * 100).toFixed(1)}%`;
+  const fly = (pos, zoom) => map.flyTo({ center: pos, zoom, duration: 2500, padding: viewPadding() });
+  const panel = (on) => document.body.classList.toggle('rec-panel', on);
+  const speed = (v) => { state.speed = v; $('speed').value = String(v); };
+  const scenes = [
+    { dur: 12, enter() { panel(false); setFocus(null); speed(60); setTime(8 * 3600); setPlaying(true); fly(center, 8.3); },
+      caption: () => `海眼：衛星 AIS 船舶軌跡預測與異常航行預警｜美國南加州外海 ${D.meta.t0.slice(0, 10)}，約 ${Object.keys(D.vessels || {}).length.toLocaleString('en-US')} 艘船（NOAA 公開 AIS，用於演算法驗證）` },
+    { dur: 20, enter() { fly(overview, 10.2); },
+      caption: () => '每艘航行中的船，系統同時預測 5／15／30 分鐘後的位置（藍點），扇形是 90% 的不確定範圍；預測只用當下以前的資料' },
+    ship && { dur: 26, enter() { setPlaying(false); setTime(tShip); state.detail = false; focusKey = ''; setFocus(ship.trip.m); fly(ship.at.pos, 11.5); setPlaying(true); },
+      tick(e) { if (e >= 12 && !state.detail) { state.detail = true; focusKey = ''; } },
+      caption: (e) => e < 12
+        ? `點選一艘船（${vesselName(ship.trip.m)}）：先看簡易說明——15 分鐘後大約在哪個方向、多遠、可能誤差多少`
+        : '詳細模式：融合（藍）與五個預測器——常速度、常轉向率、NLMS、IMM、航道先驗；右側是各預測器當下的 Hedge 權重，誰最近猜得準，權重就往誰移' },
+    past && { dur: 22, enter() { state.detail = false; focusKey = ''; state.showCone = false; state.pastFocusOnly = true;
+      setPlaying(false); setTime(past.t - 120); setFocus(past.m); fly(past.pos, 12.3); setPlaying(true); speed(30); },
+      caption: () => `準不準一眼就看得到：藍色虛線是系統 15 分鐘前預測「船現在會在哪」，青綠色是實際航跡；細線是兩者的差距（${vesselName(past.m)}）` },
+    { dur: 15, enter() { state.showCone = true; state.pastFocusOnly = false; setFocus(null); speed(60); setTime(3 * 3600); fly([-118.22, 33.73], 12.4); },
+      caption: () => '船身上的圖案代表船型：貨櫃是貨輪、油桶是油輪、魚是漁船、醫療箱是救援船、警徽是執法船……桃紅色的救援船港內待命時也看得到，派遣時可以納入' },
+    dev && { dur: 30, enter() { speed(60); select(dev); },
+      caption: () => `【模擬情境】${tourCaptionText(dev)}` },
+    gap && { dur: 32, enter() { speed(300); select(gap); },
+      caption: () => `【模擬情境】${tourCaptionText(gap)}` },
+    outage.length && { dur: 20, enter() { stopSelected(); speed(60); setPlaying(false); setTime(tOut);
+      // 拉近到看得到船影標籤（9 級以上）：以失聯船位置的中位數為中心
+      const mid = (v) => v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)];
+      fly([mid(outage.map((g) => g.lon)), mid(outage.map((g) => g.lat))], 9.3); },
+      caption: () => `08:12 前後，外海 ${outage.length} 艘航行中的船在 2 分鐘內相繼失聯，09:00 整點又一起恢復：系統研判是岸基接收站斷訊，以灰色船影標示，不列為可疑，避免整批誤報` },
+    loiter && { dur: 16, enter() { speed(60); select(loiter); },
+      caption: () => `示範：船在「${loiter.d.zone}」內低速停留滿 1 小時，判定「異常滯留」——船錨可能拖壞海纜（海域是示範用的假設範圍）` },
+    { dur: 16, enter() { stopSelected(); setPlaying(false); setTime(20 * 3600); state.byRisk = true; refresh(); panel(true); fly(center, 8.3); },
+      caption: () => '警示依風險分數排序：船型、是否在外海、偏離程度、是否疑似接收站斷訊、是否夜間都會加減分，每一則都寫出理由；值勤人員也可以直接標記「值得關注／誤報」' },
+    D.rescue?.showcase && { dur: 32, enter() { panel(false); startRescue('hungarian'); },
+      tick(e) {
+        if (e >= 11 && state.rescue?.mode === 'hungarian') setRescueMode('greedy');
+        if (e >= 21 && state.rescue?.mode === 'greedy' && D.rescue.showcase_rescue) setRescueMode('standby');
+      },
+      caption: (e) => {
+        const R = D.rescue.showcase, S = D.rescue.summary;
+        if (e < 11) return `延伸功能【假設情境】：${R.distress.length} 艘船同時求救，Hungarian 演算法指派附近船隻支援，並規劃避開陸地的航線——總抵達 ${Math.round(R.hungarian.total_min)} 分鐘`;
+        if (e < 21) return `對照「最近的船先去」：${Math.round(R.greedy.total_min)} 分鐘；全天 ${S.scenarios} 個模擬情境平均省 ${S.total_saving_pct}%`;
+        const W = S.with_rescue;
+        return W ? `再把港內待命的救援船納入派遣（出動航速假設 ${W.speed_kn} 節）：有待命救援船的情境，總抵達時間再少 ${W.total_saving_pct}%` : '';
+      } },
+    { dur: 22, enter() { stopRescue(); panel(true); setPlaying(false); setTime(12 * 3600); fly(center, 8.3); },
+      caption: () => (md ? `7 天實測（6/1～6/7）：融合預測比常速度外推準 ${pct(md.gain)}（95% 區間 ${pct(md.gain_ci[0])}～${pct(md.gain_ci[1])}），7 天每天都較好；` : '') +
+        '衛星每 2 小時才過頂、只收到 2% 的回報時，仍好 4%。右上角可切換 6/1～6/7，線上展示：cuiminrui.github.io/seaeye-dashboard' },
+  ];
+  return scenes.filter(Boolean);
+}
+
+function tourCaptionText(a) {
+  // 沿用導覽的字幕（去掉「模擬情境 n／N｜」的編號）
+  return tourCaption(a, state.t).replace(/^模擬情境 \d+／\d+｜/, '');
+}
+
+function stopSelected() {
+  state.selected = null;
+  setFocus(null);
+  renderAlertList(true);
+}
+
+function startRecording() {
+  if (DAYS && CURRENT_DAY !== DAYS.default) { location.search = '?record=1'; return; } // 腳本用 6/1 的事件
+  stopTour();
+  stopRescue();
+  closeWelcome(false);
+  state.simOnly = false;
+  state.highOnly = true;
+  state.types = new Set(Object.keys(TYPE_LABEL));
+  refresh();
+  rec.scenes = recScenes();
+  rec.on = true;
+  rec.i = -1;
+  document.body.classList.add('clean', 'recording');
+  nextScene();
+}
+
+function nextScene() {
+  rec.i += 1;
+  if (rec.i >= rec.scenes.length) { stopRecording(); return; }
+  rec.start = performance.now();
+  rec.scenes[rec.i].enter();
+}
+
+function stopRecording() {
+  if (!rec.on) return;
+  rec.on = false;
+  state.showCone = $('show-cone').checked;
+  state.pastFocusOnly = false;
+  document.body.classList.remove('clean', 'recording', 'rec-panel');
+  setCaption('');
+  setPlaying(false);
+  stopRescue();
+}
+
+function recTick(now) {
+  const s = rec.scenes[rec.i], e = (now - rec.start) / 1000;
+  s.tick?.(e);
+  setCaption(s.caption(e));
+  if (e >= s.dur) nextScene();
+}
+
 function frame(now) {
   if (lastFrame !== null && state.playing) {
     setTime(state.t + ((now - lastFrame) / 1000) * state.speed);
     if (state.t >= D.meta.duration) setPlaying(false);
   }
-  if (tour.on) {
+  if (rec.on) recTick(now);
+  else if (tour.on) {
     const a = tour.list[tour.idx];
     if (a.type === 'rescue') {
       const e = (now - tour.rescueStart) / 1000;
@@ -1527,6 +1681,7 @@ function bindControls() {
   $('show-idle').onchange = (e) => { state.showIdle = e.target.checked; };
   $('show-cone').onchange = (e) => { state.showCone = e.target.checked; };
   $('show-past').onchange = (e) => { state.showPast = e.target.checked; };
+  $('max-h').onchange = (e) => { state.maxH = Number(e.target.value); focusKey = ''; };
   $('search').oninput = renderSearch;
   $('search').onkeydown = (e) => {
     if (e.key === 'Enter') { const hit = searchVessels(e.target.value)[0]; if (hit) goVessel(hit); }
@@ -1555,8 +1710,9 @@ function bindControls() {
     else if (e.code === 'KeyG') (tour.on ? stopTour() : startTour());
     else if (e.code === 'KeyH') document.body.classList.toggle('clean');
     else if (e.code === 'KeyP') { state.showPred = !state.showPred; $('show-pred').checked = state.showPred; }
-    else if (e.code === 'Escape') { stopTour(); stopRescue(); state.selected = null; setFocus(null); updateUrl(); }
+    else if (e.code === 'Escape') { stopRecording(); stopTour(); stopRescue(); state.selected = null; setFocus(null); updateUrl(); }
     else if (e.code === 'KeyR') (state.rescue ? stopRescue() : startRescue());
+    else if (e.code === 'KeyV') (rec.on ? stopRecording() : startRecording());
     else if (state.selected && ['Digit1', 'Digit2', 'Digit3'].includes(e.code))
       setReview(state.selected, ['yes', 'no', 'unsure'][Number(e.code.slice(-1)) - 1]);
   });
@@ -1565,6 +1721,28 @@ function bindControls() {
 // ---------- 日期 ----------
 // days.json 列出有哪些日期與各自的資料位置（6/1 在根目錄，其餘在 days/<日期>/）；沒有這個檔就只有一天
 let DAYS = null, CURRENT_DAY = null, DAY_BASE = '';
+
+// 匯出時航跡座標與時間用差值編碼（見 dashboard_export._delta_coords），載入後還原成一般陣列
+function decodeTimes(o) {
+  if (!o.dt) return o;
+  let t = 0;
+  o.t = o.dt.map((d) => (t += d));
+  delete o.dt;
+  return o;
+}
+
+function decodeTrip(trip) {
+  decodeTimes(trip);
+  if (!trip.q) return;
+  let x = 0, y = 0;
+  trip.p = [];
+  for (let i = 0; i < trip.q.length; i += 2) {
+    x += trip.q[i];
+    y += trip.q[i + 1];
+    trip.p.push([x / 1e5, y / 1e5]);
+  }
+  delete trip.q;
+}
 
 async function loadDayIndex() {
   try {
@@ -1605,6 +1783,8 @@ async function main() {
     return;
   }
   t0ms = Date.parse(D.meta.t0);
+  D.trips.forEach(decodeTrip);
+  Object.values(D.preds || {}).forEach(decodeTimes);
   for (const d of D.trips) {
     d.cls = CLASS_GLYPH[vinfo(d.m).key] ? vinfo(d.m).key : 'unknown';
     d.rescue = d.cls === 'rescue';
@@ -1624,6 +1804,7 @@ async function main() {
   // 清理後的船舶總數（與構想書一致）；地圖上只畫航跡夠長、能做預測的船
   $('w-vessels').textContent = (Object.keys(D.vessels || {}).length || D.meta.vessels).toLocaleString('en-US');
   $('legend-cov').textContent = coverageText();
+  if (!D.meta.horizons.includes(60)) $('max-h').closest('label').classList.add('hidden'); // 舊資料沒有 60 分鐘
   showVersion();
   renderReviewBar();
   state.detail = storeGet(DETAIL_KEY) === '1';

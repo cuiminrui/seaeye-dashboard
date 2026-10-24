@@ -232,6 +232,11 @@ body.has-focus #legend, body.touring #legend, body.rescue-on #legend { display: 
 }
 #play { width: 44px; font-size: 16px; }
 #controls label { white-space: nowrap; color: var(--muted); }
+/* 筆電寬度：按鈕只留圖示（滑鼠移上去有說明），右邊的圖層開關才不會壓到數據面板 */
+@media (max-width: 1600px) {
+  #controls .btn-text { display: none; }
+  #controls { gap: 8px; }
+}
 /* 時間軸上方是警示直方圖（每 30 分鐘一格） */
 #timeline { position: relative; flex: 1; min-width: 120px; padding-top: 22px; }
 #scrub { width: 100%; accent-color: var(--accent); margin: 0; }
@@ -285,6 +290,9 @@ body.clean #caption { bottom: 32px; }
 
 /* 錄影模式：只留地圖、時鐘與警示 */
 body.clean #controls, body.clean #hint, body.clean #legend, body.clean #version { display: none; }
+/* 錄影模式：只留地圖、字幕與資料來源；需要時才露出右側面板 */
+body.recording #panel, body.recording #panel-toggle { display: none; }
+body.recording.rec-panel #panel { display: block; }
 #version {
   position: absolute; left: 18px; bottom: 1px; z-index: 1; font-size: 11px; color: var(--muted);
   text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg); pointer-events: none;
@@ -301,7 +309,7 @@ body.clean #controls, body.clean #hint, body.clean #legend, body.clean #version 
   .search-wrap { flex: 1; }
   #search, #search-results { width: 100%; }
   .icon-btn { padding: 6px 8px; }
-  #panel { display: none; top: auto; left: 8px; right: 8px; bottom: 170px; width: auto; height: calc(100% - 290px); }
+  #panel { display: none; top: auto; left: 8px; right: 8px; bottom: 170px; width: auto; height: calc(100% - 290px); overflow-y: auto; }
   body.panel-open #panel { display: flex; z-index: 4; }
   #panel-toggle {
     display: block; right: 8px; bottom: 124px; z-index: 5; padding: 8px 12px;
