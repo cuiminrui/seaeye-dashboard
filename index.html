@@ -75,6 +75,7 @@
     <div><i class="ship" style="background:#fbbf24"></i>模擬注入的船</div>
     <div><i class="ship rescue" style="background:#ff40a0"></i>救援船（<span id="legend-rescue-n">0</span> 艘，搜尋「救援」可列出）</div>
     <div><i class="swatch dot" style="background:#38bdf8"></i>融合預測（5／15／30 分）</div>
+    <div><i class="swatch past"></i>之前的預測（15 分鐘前預測的位置，對照實際航跡）</div>
     <div><i class="swatch cone"></i>90% 不確定範圍（實測涵蓋 <span id="legend-cov">—</span>）</div>
     <div class="muted" id="legend-methods">點選船舶：看簡易說明，或比較融合與各預測器</div>
     <div id="legend-ghost" class="hidden"><i class="ship ghost"></i>訊號中斷（最後回報位置）</div>
@@ -104,6 +105,7 @@
     <button id="next-alert" title="下一則警示（→）"><span class="btn-text">下一則 </span>▶</button>
     <label class="opt"><input type="checkbox" id="show-pred" checked> 預測</label>
     <label class="opt"><input type="checkbox" id="show-cone" checked> 範圍</label>
+    <label class="opt" title="藍色虛線：15 分鐘前預測船會在的位置，和實際航跡對照"><input type="checkbox" id="show-past" checked> 預測對照</label>
     <label class="opt"><input type="checkbox" id="show-idle" checked> 停泊船</label>
   </footer>
 

@@ -13,6 +13,7 @@ const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.j
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'; // 投影機用淺色
 const CJK_FONT = '"Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
 const VERIFY_H = 15; // 「預測 vs. 實際」對照用的時距（分鐘）
+const DASH_EXT = deck.PathStyleExtension ? new deck.PathStyleExtension({ dash: true }) : null;
 const RESCUE_COLORS = [[244, 63, 94], [168, 85, 247], [234, 179, 8]]; // 三個求救點各一色
 const RESCUE_ANIM_S = 8; // 出發動畫的實際秒數：最慢的船剛好在動畫結束時抵達
 const WELCOME_KEY = 'seaeye-welcome-seen';
@@ -103,7 +104,7 @@ const GLYPH_SHIP_SCALE = 1.35; // 畫圖案時船身放大一點，圖案才看�
 
 const $ = (id) => document.getElementById(id);
 const state = {
-  t: 0, playing: false, speed: 60, showPred: true, showIdle: true, showCone: true,
+  t: 0, playing: false, speed: 60, showPred: true, showIdle: true, showCone: true, showPast: true,
   types: new Set(Object.keys(TYPE_LABEL)), simOnly: false, selected: null, focus: null,
   rescue: null, // 救援示範進行中：{ mode: 'hungarian' | 'greedy', animStart }
   highOnly: true, // 警示列表預設只列高優先（模擬情境一律列出），一般警示收起來
@@ -262,6 +263,31 @@ function verification(trip, t) {
   return { predicted, actual: actual.pos, error: distanceM(predicted, actual.pos), issued: pr.t[i] };
 }
 
+function pastPredictions(trip, t) {
+  // 「之前的預測」：過去 30 分鐘內每一刻，系統在 15 分鐘前預測船會在哪裡，連成一條線。
+  // 和實際航跡（尾巴）對照，兩條線分得越開代表預測越不準。只用已經發生的事：預測目標時刻都 ≤ 現在
+  // 另外回傳最近一筆預測與船在那一刻的實際位置（gap），兩點連線就是目前的預測誤差
+  const pr = D.preds[trip.m], j = D.meta.horizons.indexOf(VERIFY_H);
+  if (!pr || j < 0) return { paths: [], gap: null };
+  const n = D.meta.horizons.length, h = VERIFY_H * 60, paths = [];
+  let cur = [], prev = null, gap = null;
+  for (let i = lowerBound(pr.t, t - h); i >= 0 && pr.t[i] + h >= t - TRAIL_S; i--) {
+    const p = pr.p[i * n + j];
+    if (p && !gap) {
+      const actual = positionAt(trip, pr.t[i] + h);
+      if (actual) gap = { predicted: p, actual: actual.pos };
+    }
+    if (!p || (prev !== null && prev - pr.t[i] > 180)) { // 中間斷掉超過 3 分鐘就分成兩段
+      if (cur.length > 1) paths.push({ path: cur });
+      cur = [];
+    }
+    if (p) cur.push(p);
+    prev = pr.t[i];
+  }
+  if (cur.length > 1) paths.push({ path: cur });
+  return { paths, gap };
+}
+
 function coverageText() {
   const v = Object.values(D.meta.coverage90 || {}).map((c) => c * 100);
   if (!v.length) return '—';
@@ -289,7 +315,7 @@ async function loadVessel(mmsi) {
   if (!D.preds[String(mmsi)]) { vesselCache.set(mmsi, null); return; }
   vesselCache.set(mmsi, 'loading');
   try {
-    const r = await fetch(`vessels/${mmsi}.json`, { cache: 'no-cache' }); // 有更新才重新下載
+    const r = await fetch(`${DAY_BASE}vessels/${mmsi}.json`, { cache: 'no-cache' }); // 有更新才重新下載
     vesselCache.set(mmsi, r.ok ? await r.json() : null); // 停泊船沒有預測檔
   } catch {
     vesselCache.set(mmsi, null);
@@ -418,6 +444,10 @@ function layers() {
   }
 
   const rescue = rescueLayers();
+  // 之前的預測軌跡：航行中的船（點選中的船一定畫），救援示範時收起來
+  const pastAll = state.showPast && !state.rescue
+    ? vessels.filter((v) => v.trip.mv || v === focusVessel).map((v) => pastPredictions(v.trip, t)) : [];
+  const past = pastAll.flatMap((x) => x.paths), pastGaps = pastAll.map((x) => x.gap).filter(Boolean);
   const predLines = [], predDots = [], cones = [];
   // 拉遠時每艘船都畫扇形會糊成一片，只畫點選中的船；拉近到 9.5 級以上才全部畫
   const conesForAll = state.showCone && map.getZoom() >= 9.5;
@@ -467,6 +497,15 @@ function layers() {
       getColor: (d) => vesselColor(d, theme),
       widthMinPixels: 2, opacity: 0.75, capRounded: true, jointRounded: true,
       updateTriggers: { getColor: theme.key },
+    }),
+    new deck.PathLayer({
+      id: 'past-predictions', data: past, getPath: (d) => d.path,
+      getColor: [...COLOR.pred, 210], widthMinPixels: 2, jointRounded: true, capRounded: true,
+      ...(DASH_EXT ? { extensions: [DASH_EXT], getDashArray: [3, 2], dashJustified: true } : {}),
+    }),
+    new deck.LineLayer({
+      id: 'past-gaps', data: pastGaps, getSourcePosition: (d) => d.predicted, getTargetPosition: (d) => d.actual,
+      getColor: [...COLOR.pred, 140], getWidth: 1, widthUnits: 'pixels',
     }),
     // 海面遮罩（範圍外框挖掉陸地）：不確定扇形只畫在海上
     new deck.PolygonLayer({
@@ -1232,6 +1271,7 @@ function simList() {
 
 function linkParams() {
   const p = new URLSearchParams(), s = state.selected;
+  if (DAYS && CURRENT_DAY !== DAYS.default) p.set('day', CURRENT_DAY); // 分享的連結停在同一天
   if (state.rescue) p.set('rescue', '1');
   else if (s && s.sim) p.set('event', simList().indexOf(s) + 1);
   else if (state.focus) { p.set('mmsi', state.focus); p.set('t', clock(state.t)); }
@@ -1325,7 +1365,7 @@ async function showVersion() {
 async function expectedSize() {
   // 匯出時記下的 data.json 大小（位元組）；讀不到就回傳 0，載入畫面改顯示動畫
   try {
-    const r = await fetch('data-size.json', { cache: 'no-cache' });
+    const r = await fetch(`${DAY_BASE}data-size.json`, { cache: 'no-cache' });
     return r.ok ? Number((await r.json()).bytes) || 0 : 0;
   } catch {
     return 0;
@@ -1486,6 +1526,7 @@ function bindControls() {
   $('show-pred').onchange = (e) => { state.showPred = e.target.checked; };
   $('show-idle').onchange = (e) => { state.showIdle = e.target.checked; };
   $('show-cone').onchange = (e) => { state.showCone = e.target.checked; };
+  $('show-past').onchange = (e) => { state.showPast = e.target.checked; };
   $('search').oninput = renderSearch;
   $('search').onkeydown = (e) => {
     if (e.key === 'Enter') { const hit = searchVessels(e.target.value)[0]; if (hit) goVessel(hit); }
@@ -1521,13 +1562,44 @@ function bindControls() {
   });
 }
 
+// ---------- 日期 ----------
+// days.json 列出有哪些日期與各自的資料位置（6/1 在根目錄，其餘在 days/<日期>/）；沒有這個檔就只有一天
+let DAYS = null, CURRENT_DAY = null, DAY_BASE = '';
+
+async function loadDayIndex() {
+  try {
+    const r = await fetch('days.json', { cache: 'no-cache' });
+    if (r.ok) DAYS = await r.json();
+  } catch { DAYS = null; }
+  if (!DAYS?.days?.length) return;
+  const want = new URLSearchParams(location.search).get('day');
+  const entry = DAYS.days.find((d) => d.date === want) || DAYS.days.find((d) => d.date === DAYS.default) || DAYS.days[0];
+  CURRENT_DAY = entry.date;
+  DAY_BASE = entry.path;
+}
+
+function renderDaySelect() {
+  const box = $('clock-date');
+  if (!DAYS || DAYS.days.length < 2) { box.textContent = D.meta.t0.slice(0, 10) + ' · UTC'; return; }
+  box.innerHTML = '<select id="day-select" title="切換日期（重新載入那一天的資料）">' +
+    DAYS.days.map((d) => `<option value="${d.date}"${d.date === CURRENT_DAY ? ' selected' : ''}>${d.date}</option>`).join('') +
+    '</select> · UTC';
+  $('day-select').onchange = (e) => {
+    // 換日期就整頁重新載入：時間、警示、救援情境都跟著換
+    const p = new URLSearchParams();
+    if (e.target.value !== DAYS.default) p.set('day', e.target.value);
+    location.search = p.toString();
+  };
+}
+
 async function main() {
   // 網址的 ?theme=light／dark 優先（例如決審投影直接開淺色版），其次是上次的選擇
   const themeParam = new URLSearchParams(location.search).get('theme');
   const light = themeParam ? themeParam === 'light' : storeGet(THEME_KEY) === 'light';
   setTheme(light, false);
   try {
-    D = await fetchJsonWithProgress('data.json', showProgress, await expectedSize());
+    await loadDayIndex();
+    D = await fetchJsonWithProgress(`${DAY_BASE}data.json`, showProgress, await expectedSize());
   } catch (err) {
     $('loading-text').textContent = '讀不到 data.json：請先執行 python -m seaeye dashboard，並用 http 伺服器開啟此頁';
     return;
@@ -1546,7 +1618,7 @@ async function main() {
   tripMmsi = new Set(D.trips.map((d) => d.m));
   alerts = D.alerts;
   $('scrub').max = D.meta.duration;
-  $('clock-date').textContent = D.meta.t0.slice(0, 10) + ' · UTC';
+  renderDaySelect();
   $('source').textContent = '資料：' + D.meta.source;
   $('w-date').textContent = D.meta.t0.slice(0, 10);
   // 清理後的船舶總數（與構想書一致）；地圖上只畫航跡夠長、能做預測的船
