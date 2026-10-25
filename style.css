@@ -291,12 +291,15 @@ body.clean #caption { bottom: 32px; }
 /* 錄影模式：只留地圖、時鐘與警示 */
 body.clean #controls, body.clean #hint, body.clean #legend, body.clean #version { display: none; }
 /* 錄影模式：只留地圖、字幕與資料來源；需要時才露出右側面板 */
-body.recording #panel, body.recording #panel-toggle { display: none; }
+body.recording #panel, body.recording #panel-toggle, body.recording .collapse-btn { display: none; }
 body.recording.rec-panel #panel { display: block; }
 #version {
   position: absolute; left: 18px; bottom: 1px; z-index: 1; font-size: 11px; color: var(--muted);
   text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg); pointer-events: none;
 }
+
+.a-sar { margin-top: 6px; padding: 6px 8px; border-radius: 6px; font-size: 12px; line-height: 1.5;
+  background: rgba(251, 146, 60, 0.14); border-left: 3px solid #fb923c; }
 
 /* ---------- 四個框右上角的收合按鈕（電腦版；收合狀態記在瀏覽器裡） ---------- */
 .collapse-btn {

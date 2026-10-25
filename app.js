@@ -294,6 +294,177 @@ function pastPredictions(trip, t) {
   return { paths, gap };
 }
 
+// ---------- 衛星情境（錄影模式）：把岸基航跡抽成「衛星過頂才收得到」的樣子 ----------
+// 過頂時段用 satellite.json 裡 ORBCOMM OG2 的真實軌道（seaeye/orbits.py）；沒有時退回「平均每小時過頂、
+// 間隔 ±30%、每次 10 分鐘」的假設。每次過頂每艘船有 80% 機率被收到一筆。只是示意，畫面上的預測仍是岸基資料算的
+const SAT_REVISIT_S = 3600, SAT_PASS_S = 600, SAT_P = 0.8, SAT_WINDOW_S = 5 * 3600;
+let SAT = null; // dashboard/satellite.json：7 天衛星模擬的結果
+
+function satRandom(seed) {
+  // mulberry32：固定種子的亂數，每次錄影抽到的過頂時刻都一樣
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let x = Math.imul(a ^ (a >>> 15), 1 | a);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function satPasses() {
+  // 有 satellite.json 的真實軌道過頂（ORBCOMM OG2）就用它；沒有時退回「平均每小時過頂」的假設
+  const real = SAT?.show?.passes?.[D.meta.t0.slice(0, 10)];
+  if (real) return real;
+  const rng = satRandom(20230601), out = [];
+  for (let t = rng() * SAT_REVISIT_S; t < D.meta.duration; t += SAT_REVISIT_S * (0.7 + 0.6 * rng())) out.push([t, t + SAT_PASS_S]);
+  return out;
+}
+
+function satelliteView(trip, t1) {
+  // 過去 SAT_WINDOW_S 內：岸基收到的每一筆、衛星收到的幾筆、衛星過頂卻漏收的時刻
+  const t0 = t1 - SAT_WINDOW_S, shore = [], got = [], miss = [];
+  for (let i = 0; i < trip.t.length; i++) if (trip.t[i] >= t0 && trip.t[i] <= t1) shore.push(trip.p[i]);
+  satPasses().forEach(([p, pEnd], k) => {
+    if (p < t0 || p > t1) return;
+    const rng = satRandom(trip.m * 31 + k), idx = [];
+    for (let i = lowerBound(trip.t, p) + 1; i < trip.t.length && trip.t[i] <= pEnd; i++) idx.push(i);
+    const detected = rng() < SAT_P;
+    if (idx.length && detected) {
+      const i = idx[Math.floor(rng() * idx.length)];
+      got.push({ pos: trip.p[i], t: trip.t[i] });
+    } else {
+      const at = positionAt(trip, (p + pEnd) / 2);
+      if (at) miss.push({ pos: at.pos, t: p });
+    }
+  });
+  return { shore, got, miss };
+}
+
+function pickSatShip() {
+  // 外海、整段 5 小時都連續回報的貨輪或油輪，挑走得最遠的（航跡拉得開，稀疏的點才看得清楚）；
+  // 衛星要收到 3 筆以上、最好也有一次漏收
+  let best = null;
+  for (let t = 10 * 3600; t <= 20 * 3600; t += 3600) {
+    for (const v of movingAt(t)) {
+      if (!['cargo', 'tanker'].includes(v.trip.cls) || (v.at.sog ?? 0) < 10) continue;
+      const a = positionAt(v.trip, t - SAT_WINDOW_S);
+      if (!a) continue;
+      const i0 = lowerBound(v.trip.t, t - SAT_WINDOW_S), i1 = lowerBound(v.trip.t, t);
+      let maxGap = 0;
+      for (let i = i0 + 1; i <= i1; i++) maxGap = Math.max(maxGap, v.trip.t[i] - v.trip.t[i - 1]);
+      if (maxGap > 600) continue;
+      const view = satelliteView(v.trip, t);
+      if (view.got.length < 3) continue;
+      const score = distanceM(a.pos, v.at.pos) * (view.miss.length ? 1.3 : 1);
+      if (!best || score > best.score) best = { t, m: v.trip.m, trip: v.trip, view, score };
+    }
+  }
+  return best;
+}
+
+function satLayers(theme) {
+  const s = state.sat;
+  if (!s) return [];
+  const amber = [251, 191, 36], v = s.view, on = s.phase >= 1;
+  const hhmm = (t) => clock(t).slice(0, 5);
+  // 真實軌道的過頂常常幾分鐘內連著好幾次，標籤會疊在一起：15 分鐘內只標第一個
+  const labels = [];
+  for (const d of [...v.got.map((x) => ({ ...x, ok: true })), ...v.miss].sort((x, y) => x.t - y.t))
+    if (!labels.length || d.t - labels[labels.length - 1].t >= 900) labels.push(d);
+  return [
+    new deck.ScatterplotLayer({
+      id: 'sat-shore', data: v.shore, getPosition: (d) => d, getRadius: 2.2, radiusUnits: 'pixels',
+      getFillColor: [...theme.text, on ? 70 : 200], updateTriggers: { getFillColor: [on, theme.key] },
+    }),
+    new deck.PathLayer({
+      id: 'sat-path', data: on && v.got.length > 1 ? [{ path: v.got.map((d) => d.pos) }] : [], getPath: (d) => d.path,
+      getColor: [...amber, 230], widthMinPixels: 2.5,
+      ...(DASH_EXT ? { extensions: [DASH_EXT], getDashArray: [4, 3], dashJustified: true } : {}),
+    }),
+    new deck.ScatterplotLayer({
+      id: 'sat-got', data: on ? v.got : [], getPosition: (d) => d.pos, getRadius: 8, radiusUnits: 'pixels',
+      stroked: true, getFillColor: amber, getLineColor: [255, 255, 255], lineWidthMinPixels: 2,
+    }),
+    new deck.ScatterplotLayer({
+      id: 'sat-miss', data: on ? v.miss : [], getPosition: (d) => d.pos, getRadius: 8, radiusUnits: 'pixels',
+      stroked: true, filled: false, getLineColor: [...theme.text, 180], lineWidthMinPixels: 2,
+      ...(DASH_EXT ? { extensions: [DASH_EXT], getDashArray: [2, 2] } : {}),
+    }),
+    new deck.TextLayer({
+      id: 'sat-labels', data: on ? labels : [],
+      getPosition: (d) => d.pos, getText: (d) => (d.ok ? `衛星收到 ${hhmm(d.t)}` : `過頂漏收 ${hhmm(d.t)}`),
+      getColor: (d) => (d.ok ? amber : theme.text), getSize: 13, getPixelOffset: [0, -20],
+      fontFamily: CJK_FONT, fontWeight: 700, characterSet: 'auto',
+      background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [5, 2],
+      updateTriggers: { getColor: theme.key, getBackgroundColor: theme.key },
+    }),
+  ];
+}
+
+// ---------- SAR 取像建議：疑似關閉 AIS 的船，下一顆 SAR 衛星過頂時該拍哪裡（seaeye/sar.py） ----------
+let SARD = null; // dashboard/sar.json：各船型組別的 (α, 半徑比例, 對照組比例)、每天的 SAR 可取像時段
+const SAR_COLOR = [251, 146, 60];
+const sarCache = new Map();
+
+function sarSuggestion(a) {
+  // 警示發出（a.td）之後的第一次 SAR 可取像時段；圓心 = 最後位置 + α × 直線外推位移，半徑 = 比例 × 航程
+  if (!SARD || !a || a.type !== 'ais_gap') return null;
+  if (sarCache.has(a)) return sarCache.get(a);
+  let res = null;
+  const trip = D.trips.find((d) => d.m === a.m && d.t[0] <= a.ts && a.ts <= d.t[d.t.length - 1]);
+  const at = trip && positionAt(trip, a.ts);
+  const opp = SARD.opportunities[D.meta.t0.slice(0, 10)];
+  const w = opp && opp.find((o) => o[0] >= a.td);
+  if (at && w && (at.sog ?? 0) >= 1) {
+    const m = SARD.model[SARD.groups[trip.cls] || 'other'] || SARD.model.other;
+    // 鍵是 "0.5"、"1.0" 這樣的字串，先轉成依經過時間排序的 [小時, (α, 比例, 對照比例)]
+    const rows = Object.entries(m).map(([h, v]) => [Number(h), v]).sort((x, y) => x[0] - y[0]);
+    const dtH = (w[0] - a.ts) / 3600;
+    const interp = (k) => {
+      const h = Math.min(Math.max(dtH, rows[0][0]), rows[rows.length - 1][0]);
+      const j = Math.max(1, rows.findIndex((x) => x[0] >= h));
+      const f = (h - rows[j - 1][0]) / (rows[j][0] - rows[j - 1][0] || 1);
+      return rows[j - 1][1][k] + f * (rows[j][1][k] - rows[j - 1][1][k]);
+    };
+    const d = at.sog * 0.514444 * dtH * 3600, alpha = interp(0), rad = (at.heading * Math.PI) / 180;
+    const lat = at.pos[1] + (alpha * d * Math.cos(rad)) / 110540;
+    const lon = at.pos[0] + (alpha * d * Math.sin(rad)) / (111320 * Math.cos((at.pos[1] * Math.PI) / 180));
+    const r = interp(1) * d;
+    res = { center: [lon, lat], bottom: [lon, lat - r / 110540], last: at.pos, r, r0: interp(2) * d,
+      t: w[0], key: w[2], label: SARD.labels[w[2]], dtH, wait: (w[0] - a.td) / 60 };
+  }
+  sarCache.set(a, res);
+  return res;
+}
+
+function sarText(s) {
+  const km = (m) => (m / 1000).toFixed(m < 10000 ? 1 : 0);
+  return `建議 SAR 取像：${s.label} ${clock(s.t)} 過頂（警示後 ${Math.round(s.wait)} 分鐘），拍橘色圓內` +
+    `（半徑 ${km(s.r)} 公里；只知道最後位置、往任何方向算的話要 ${km(s.r0)} 公里）。拍到船卻沒有 AIS，就是暗船`;
+}
+
+function sarLayers(theme) {
+  const a = state.selected, s = a && state.t >= a.td ? sarSuggestion(a) : null, data = s ? [s] : [];
+  return [
+    new deck.ScatterplotLayer({
+      id: 'sar-naive', data, getPosition: (d) => d.last, getRadius: (d) => d.r0, radiusUnits: 'meters',
+      stroked: true, filled: false, getLineColor: [...theme.text, 90], lineWidthMinPixels: 1,
+      updateTriggers: { getLineColor: theme.key },
+    }),
+    new deck.ScatterplotLayer({
+      id: 'sar-region', data, getPosition: (d) => d.center, getRadius: (d) => d.r, radiusUnits: 'meters',
+      stroked: true, getFillColor: [...SAR_COLOR, 45], getLineColor: [...SAR_COLOR, 235], lineWidthMinPixels: 2,
+    }),
+    new deck.TextLayer({
+      id: 'sar-label', data, getPosition: (d) => d.bottom, // 圓的下緣：上緣常被標題列擋住
+      getText: (d) => `建議 SAR 取像｜${d.label} ${clock(d.t)} 過頂｜半徑 ${(d.r / 1000).toFixed(d.r < 10000 ? 1 : 0)} 公里`,
+      getColor: SAR_COLOR, getSize: 13, getPixelOffset: [0, 14], fontFamily: CJK_FONT, fontWeight: 700,
+      characterSet: 'auto', background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [5, 2],
+      updateTriggers: { getBackgroundColor: theme.key },
+    }),
+  ];
+}
+
 function coverageText() {
   const v = Object.values(D.meta.coverage90 || {}).map((c) => c * 100);
   if (!v.length) return '—';
@@ -651,6 +822,8 @@ function layers() {
       background: true, getBackgroundColor: theme.labelBg, backgroundPadding: [6, 3],
       updateTriggers: { getColor: theme.key, getBackgroundColor: theme.key },
     }),
+    ...satLayers(theme),
+    ...sarLayers(theme),
     new deck.PathLayer({
       id: 'rescue-routes', data: rescue.routes, getPath: (d) => d.path,
       getColor: (d) => [...d.color, 230], getWidth: 4, widthUnits: 'pixels', jointRounded: true, capRounded: true,
@@ -1103,6 +1276,7 @@ function renderAlertList(force) {
       `${clock(a.td)}</span></div>` +
       `<div class="a-body"><b>${esc(vesselName(a.m))}</b> · ${esc(describe(a))}</div>` +
       (a.d?.risk_reasons?.length ? `<div class="a-risk">風險因素：${esc(a.d.risk_reasons.join('、'))}</div>` : '') +
+      (a === state.selected && sarSuggestion(a) ? `<div class="a-sar">${esc(sarText(sarSuggestion(a)))}</div>` : '') +
       (a === state.selected ? '<div class="a-review">' + Object.entries(REVIEW_LABEL).map(([k, label], n) =>
         `<button data-r="${k}" class="${reviews[reviewKey(a)] === k ? 'on' : ''}">${n + 1} ${label}</button>`).join('') + '</div>' : '');
     const mark = reviews[reviewKey(a)];
@@ -1502,7 +1676,11 @@ function tourCaption(a, t) {
     return `${head}：判定「異常滯留」——船在海纜保護區內停留或下錨，船錨可能拖壞海纜（臺灣近年也發生過海纜疑遭船錨損壞的事件）`;
   }
   if (t < a.td) return `${head}：AIS 訊號消失，系統開始計時（已 ${Math.floor((t - a.ts) / 60)} 分鐘，滿 60 分鐘判定）`;
-  if (t < a.te) return `${head}：中斷滿 60 分鐘，發出「疑似關閉 AIS」警示`;
+  if (t < a.te) {
+    const s = sarSuggestion(a);
+    return `${head}：中斷滿 60 分鐘，發出「疑似關閉 AIS」警示` +
+      (s ? `；建議 ${s.label} ${clock(s.t)} 過頂時拍橘色圓內（半徑 ${(s.r / 1000).toFixed(0)} 公里）` : '');
+  }
   return `${head}：船恢復訊號——${describe(a, t)}`;
 }
 
@@ -1517,6 +1695,7 @@ function setCaption(text) {
 // 按 V（或網址加 ?record=1）依固定腳本播放約 4 分半，給錄製實作影片用：介面收起來，只留地圖與字幕，
 // 每一段用實際秒數推進，錄幾次長度都一樣。要看的船與時刻從資料挑（只用 6/1，其他日期會先切回 6/1）。
 const rec = { on: false, i: -1, start: 0, scenes: [] };
+let gapHeld = false; // 錄影模式訊號中斷那段：停下來說明 SAR 取像建議了沒
 
 function movingAt(t) {
   return trips.moving.filter((d) => d.mv).map((trip) => ({ trip, at: positionAt(trip, t) })).filter((v) => v.at);
@@ -1550,6 +1729,8 @@ function pickPastExample() {
 function recScenes() {
   const center = D.meta.center, overview = [-118.3, 33.62];
   const tShip = 9 * 3600, ship = pickFocusShip(tShip, overview), past = pickPastExample();
+  const sat = SAT && pickSatShip(), sats = SAT?.scenarios || [];
+  const maxH = (h) => { state.maxH = h; $('max-h').value = String(h); focusKey = ''; };
   const sims = simList(), dev = sims.find((a) => a.type === 'deviation'), gap = sims.find((a) => a.type === 'ais_gap');
   const loiter = alerts.find((a) => a.type === 'loiter');
   const tOut = 8 * 3600 + 15 * 60, outage = gapsAt(tOut).filter((g) => g.k === 'outage');
@@ -1561,9 +1742,33 @@ function recScenes() {
   const scenes = [
     { dur: 12, enter() { panel(false); setFocus(null); speed(60); setTime(8 * 3600); setPlaying(true); fly(center, 8.3); },
       caption: () => `海眼：衛星 AIS 船舶軌跡預測與異常航行預警｜美國南加州外海 ${D.meta.t0.slice(0, 10)}，約 ${Object.keys(D.vessels || {}).length.toLocaleString('en-US')} 艘船（NOAA 公開 AIS，用於演算法驗證）` },
-    { dur: 20, enter() { fly(overview, 10.2); },
-      caption: () => '每艘航行中的船，系統同時預測 5／15／30 分鐘後的位置（藍點），扇形是 90% 的不確定範圍；預測只用當下以前的資料' },
-    ship && { dur: 26, enter() { setPlaying(false); setTime(tShip); state.detail = false; focusKey = ''; setFocus(ship.trip.m); fly(ship.at.pos, 11.5); setPlaying(true); },
+    { dur: 26, enter() { fly(overview, 10.2); },
+      // 切到 60 分鐘時先收起扇形：60 分鐘的範圍很大，全部畫出來會蓋滿畫面
+      tick(e) { if (e >= 13 && state.maxH !== 60 && D.meta.horizons.includes(60)) { maxH(60); state.showCone = false; } },
+      // 60 分鐘的 20.9%：7 天儀表板未注入 run 的融合 ADE 相對 CV（8,312 → 6,576 公尺），見 README「60 分鐘預測」
+      caption: (e) => e < 13 || !D.meta.horizons.includes(60)
+        ? '每艘航行中的船，系統同時預測 5／15／30 分鐘後的位置（藍點），扇形是 90% 的不確定範圍；預測只用當下以前的資料'
+        : '也能預測到 60 分鐘後：時距越長，比「照目前航速航向直線外推」的優勢越大——7 天平均準 20.9%' },
+    sat && { dur: 28, enter() { maxH(30); state.showCone = $('show-cone').checked; setPlaying(false); setTime(sat.t); setFocus(null);
+      state.sat = { view: sat.view, phase: 0 };
+      const pts = sat.view.shore, lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1]), pad = viewPadding();
+      map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+        { padding: { top: pad.top + 60, bottom: pad.bottom + 60, left: pad.left + 60, right: pad.right + 60 }, duration: 2500 }); },
+      tick(e) { state.sat.phase = e >= 9 ? 1 : 0; },
+      caption: (e) => {
+        const s60 = sats.find((s) => s.revisit_min === 60), pct = (v) => `${(v * 100).toFixed(1)}%`;
+        if (e < 9) return `岸基接收站大約每分鐘收到一筆（白點）：${vesselName(sat.m)} 過去 5 小時有 ${sat.view.shore.length} 筆回報。但岸基只涵蓋沿岸，外海只能靠衛星`;
+        const who = SAT.show ? `${SAT.show.label.replace(/（.*）/, '')} 的 ${SAT.show.n_sats} 顆衛星，依真實軌道過頂` : '假設平均每 60 分鐘過頂';
+        if (e < 18) return `換成衛星 AIS（${who}、每次 80% 收到）：同一段航程只剩 ${sat.view.got.length} 筆（黃點）` +
+          (sat.view.miss.length ? `，還有 ${sat.view.miss.length} 次過頂漏收` : '') + '——兩次過頂之間船在哪裡，要靠預測補上';
+        const real = SAT.real_orbits || [];
+        if (real.length) return `依 3 個衛星 AIS 星系的真實軌道模擬 7 天：${real.map((s) => `${s.label.replace(/（.*）/, '')} ${s.n_sats} 顆`).join('、')}，` +
+          `收到 ${real.map((s) => pct(s.observed_share)).join('／')} 的回報，融合仍比直線外推準 ${real.map((s) => pct(s.gain)).join('／')}`;
+        return `7 天模擬：每 ${sats.map((s) => s.revisit_min).join('／')} 分鐘過頂、只收到 ${sats.map((s) => pct(s.observed_share)).join('／')} 的回報，` +
+          `融合仍比直線外推準 ${sats.map((s) => pct(s.gain)).join('／')}；訊號中斷改成連續漏掉 ${SAT.gap_passes} 次過頂才警示` +
+          (s60 ? `（60 分鐘過頂即 ${s60.gap_alert_h} 小時）` : '');
+      } },
+    ship && { dur: 26, enter() { state.sat = null; maxH(30); state.showCone = $('show-cone').checked; setPlaying(false); setTime(tShip); state.detail = false; focusKey = ''; setFocus(ship.trip.m); fly(ship.at.pos, 11.5); setPlaying(true); },
       tick(e) { if (e >= 12 && !state.detail) { state.detail = true; focusKey = ''; } },
       caption: (e) => e < 12
         ? `點選一艘船（${vesselName(ship.trip.m)}）：先看簡易說明——15 分鐘後大約在哪個方向、多遠、可能誤差多少`
@@ -1575,8 +1780,21 @@ function recScenes() {
       caption: () => '船身上的圖案代表船型：貨櫃是貨輪、油桶是油輪、魚是漁船、醫療箱是救援船、警徽是執法船……桃紅色的救援船港內待命時也看得到，派遣時可以納入' },
     dev && { dur: 30, enter() { speed(60); select(dev); },
       caption: () => `【模擬情境】${tourCaptionText(dev)}` },
-    gap && { dur: 32, enter() { speed(300); select(gap); },
-      caption: () => `【模擬情境】${tourCaptionText(gap)}` },
+    gap && { dur: 40, enter() { gapHeld = false; speed(300); select(gap); },
+      tick() {
+        const s = sarSuggestion(gap);
+        if (gapHeld || !s || state.t < gap.td + 300) return;
+        gapHeld = true; // 警示發出 5 分鐘後停住，鏡頭拉到能看到整個建議範圍
+        setPlaying(false);
+        const mpp = (s.r * 2.6) / 900, z = Math.log2((78271.5 * Math.cos((s.center[1] * Math.PI) / 180)) / mpp);
+        map.flyTo({ center: s.center, zoom: Math.min(11, Math.max(7, z)), duration: 2000, padding: viewPadding() });
+      },
+      caption: () => {
+        const s = gapHeld && sarSuggestion(gap);
+        return s ? `【模擬情境】船一直沒有回報：系統依它失聯前的航速、航向，建議下一顆 SAR 雷達衛星（${s.label}，${clock(s.t)} 過頂）` +
+          `拍橘色圓內（半徑 ${(s.r / 1000).toFixed(0)} 公里，只有往任何方向算的 ${Math.round((s.r / s.r0) ** 2 * 100)}% 面積）——拍到船卻沒有 AIS，就是暗船`
+          : `【模擬情境】${tourCaptionText(gap)}`;
+      } },
     outage.length && { dur: 20, enter() { stopSelected(); speed(60); setPlaying(false); setTime(tOut);
       // 拉近到看得到船影標籤（9 級以上）：以失聯船位置的中位數為中心
       const mid = (v) => v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)];
@@ -1598,9 +1816,11 @@ function recScenes() {
         const W = S.with_rescue;
         return W ? `再把港內待命的救援船納入派遣（出動航速假設 ${W.speed_kn} 節）：有待命救援船的情境，總抵達時間再少 ${W.total_saving_pct}%` : '';
       } },
-    { dur: 22, enter() { stopRescue(); panel(true); setPlaying(false); setTime(12 * 3600); fly(center, 8.3); },
-      caption: () => (md ? `7 天實測（6/1～6/7）：融合預測比常速度外推準 ${pct(md.gain)}（95% 區間 ${pct(md.gain_ci[0])}～${pct(md.gain_ci[1])}），7 天每天都較好；` : '') +
-        '衛星每 2 小時才過頂、只收到 2% 的回報時，仍好 4%。右上角可切換 6/1～6/7，線上展示：cuiminrui.github.io/seaeye-dashboard' },
+    { dur: 24, enter() { stopRescue(); panel(true); setPlaying(false); setTime(12 * 3600); fly(center, 8.3); },
+      caption: (e) => e < 13
+        ? (md ? `7 天實測（6/1～6/7）：融合預測比常速度外推準 ${pct(md.gain)}（95% 區間 ${pct(md.gain_ci[0])}～${pct(md.gain_ci[1])}），7 天每天都較好；` : '') +
+          '時鐘下方可切換 6/1～6/7，線上展示：cuiminrui.github.io/seaeye-dashboard'
+        : '下一步：接上臺灣周邊海域的衛星 AIS 與 SAR 影像，支援海巡監控、漁業管理與海纜保護——資料欄位相同，程式不用改' },
   ];
   return scenes.filter(Boolean);
 }
@@ -1636,6 +1856,7 @@ function nextScene() {
   rec.i += 1;
   if (rec.i >= rec.scenes.length) { stopRecording(); return; }
   rec.start = performance.now();
+  state.sat = null; // 衛星情境的圖層只在那一段顯示
   rec.scenes[rec.i].enter();
 }
 
@@ -1644,6 +1865,8 @@ function stopRecording() {
   rec.on = false;
   state.showCone = $('show-cone').checked;
   state.pastFocusOnly = false;
+  state.sat = null;
+  state.maxH = Number($('max-h').value = '30');
   document.body.classList.remove('clean', 'recording', 'rec-panel');
   setCaption('');
   setPlaying(false);
@@ -1809,6 +2032,8 @@ async function main() {
     $('loading-text').textContent = '讀不到 data.json：請先執行 python -m seaeye dashboard，並用 http 伺服器開啟此頁';
     return;
   }
+  SAT = await fetch('satellite.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  SARD = await fetch('sar.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
   t0ms = Date.parse(D.meta.t0);
   D.trips.forEach(decodeTrip);
   Object.values(D.preds || {}).forEach(decodeTimes);
