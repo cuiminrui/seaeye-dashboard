@@ -1740,26 +1740,26 @@ function recScenes() {
   const panel = (on) => document.body.classList.toggle('rec-panel', on);
   const speed = (v) => { state.speed = v; $('speed').value = String(v); };
   const scenes = [
-    { dur: 12, enter() { panel(false); setFocus(null); speed(60); setTime(8 * 3600); setPlaying(true); fly(center, 8.3); },
+    { dur: 16, enter() { panel(false); setFocus(null); speed(60); setTime(8 * 3600); setPlaying(true); fly(center, 8.3); },
       caption: () => `海眼：衛星 AIS 船舶軌跡預測與異常航行預警｜美國南加州外海 ${D.meta.t0.slice(0, 10)}，約 ${Object.keys(D.vessels || {}).length.toLocaleString('en-US')} 艘船（NOAA 公開 AIS，用於演算法驗證）` },
-    { dur: 26, enter() { fly(overview, 10.2); },
+    { dur: 34, enter() { fly(overview, 10.2); },
       // 切到 60 分鐘時先收起扇形：60 分鐘的範圍很大，全部畫出來會蓋滿畫面
-      tick(e) { if (e >= 13 && state.maxH !== 60 && D.meta.horizons.includes(60)) { maxH(60); state.showCone = false; } },
+      tick(e) { if (e >= 18 && state.maxH !== 60 && D.meta.horizons.includes(60)) { maxH(60); state.showCone = false; } },
       // 60 分鐘的 20.9%：7 天儀表板未注入 run 的融合 ADE 相對 CV（8,312 → 6,576 公尺），見 README「60 分鐘預測」
-      caption: (e) => e < 13 || !D.meta.horizons.includes(60)
+      caption: (e) => e < 18 || !D.meta.horizons.includes(60)
         ? '每艘航行中的船，系統同時預測 5／15／30 分鐘後的位置（藍點），扇形是 90% 的不確定範圍；預測只用當下以前的資料'
         : '也能預測到 60 分鐘後：時距越長，比「照目前航速航向直線外推」的優勢越大——7 天平均準 20.9%' },
-    sat && { dur: 28, enter() { maxH(30); state.showCone = $('show-cone').checked; setPlaying(false); setTime(sat.t); setFocus(null);
+    sat && { dur: 38, enter() { maxH(30); state.showCone = $('show-cone').checked; setPlaying(false); setTime(sat.t); setFocus(null);
       state.sat = { view: sat.view, phase: 0 };
       const pts = sat.view.shore, lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1]), pad = viewPadding();
       map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
         { padding: { top: pad.top + 60, bottom: pad.bottom + 60, left: pad.left + 60, right: pad.right + 60 }, duration: 2500 }); },
-      tick(e) { state.sat.phase = e >= 9 ? 1 : 0; },
+      tick(e) { state.sat.phase = e >= 12 ? 1 : 0; },
       caption: (e) => {
         const s60 = sats.find((s) => s.revisit_min === 60), pct = (v) => `${(v * 100).toFixed(1)}%`;
-        if (e < 9) return `岸基接收站大約每分鐘收到一筆（白點）：${vesselName(sat.m)} 過去 5 小時有 ${sat.view.shore.length} 筆回報。但岸基只涵蓋沿岸，外海只能靠衛星`;
+        if (e < 12) return `岸基接收站大約每分鐘收到一筆（白點）：${vesselName(sat.m)} 過去 5 小時有 ${sat.view.shore.length} 筆回報。但岸基只涵蓋沿岸，外海只能靠衛星`;
         const who = SAT.show ? `${SAT.show.label.replace(/（.*）/, '')} 的 ${SAT.show.n_sats} 顆衛星，依真實軌道過頂` : '假設平均每 60 分鐘過頂';
-        if (e < 18) return `換成衛星 AIS（${who}、每次 80% 收到）：同一段航程只剩 ${sat.view.got.length} 筆（黃點）` +
+        if (e < 25) return `換成衛星 AIS（${who}、每次 80% 收到）：同一段航程只剩 ${sat.view.got.length} 筆（黃點）` +
           (sat.view.miss.length ? `，還有 ${sat.view.miss.length} 次過頂漏收` : '') + '——兩次過頂之間船在哪裡，要靠預測補上';
         const real = SAT.real_orbits || [];
         if (real.length) return `依 3 個衛星 AIS 星系的真實軌道模擬 7 天：${real.map((s) => `${s.label.replace(/（.*）/, '')} ${s.n_sats} 顆`).join('、')}，` +
@@ -1768,19 +1768,19 @@ function recScenes() {
           `融合仍比直線外推準 ${sats.map((s) => pct(s.gain)).join('／')}；訊號中斷改成連續漏掉 ${SAT.gap_passes} 次過頂才警示` +
           (s60 ? `（60 分鐘過頂即 ${s60.gap_alert_h} 小時）` : '');
       } },
-    ship && { dur: 26, enter() { state.sat = null; maxH(30); state.showCone = $('show-cone').checked; setPlaying(false); setTime(tShip); state.detail = false; focusKey = ''; setFocus(ship.trip.m); fly(ship.at.pos, 11.5); setPlaying(true); },
-      tick(e) { if (e >= 12 && !state.detail) { state.detail = true; focusKey = ''; } },
-      caption: (e) => e < 12
+    ship && { dur: 34, enter() { state.sat = null; maxH(30); state.showCone = $('show-cone').checked; setPlaying(false); setTime(tShip); state.detail = false; focusKey = ''; setFocus(ship.trip.m); fly(ship.at.pos, 11.5); setPlaying(true); },
+      tick(e) { if (e >= 16 && !state.detail) { state.detail = true; focusKey = ''; } },
+      caption: (e) => e < 16
         ? `點選一艘船（${vesselName(ship.trip.m)}）：先看簡易說明——15 分鐘後大約在哪個方向、多遠、可能誤差多少`
         : '詳細模式：融合（藍）與五個預測器——常速度、常轉向率、NLMS、IMM、航道先驗；右側是各預測器當下的 Hedge 權重，誰最近猜得準，權重就往誰移' },
-    past && { dur: 22, enter() { state.detail = false; focusKey = ''; state.showCone = false; state.pastFocusOnly = true;
+    past && { dur: 28, enter() { state.detail = false; focusKey = ''; state.showCone = false; state.pastFocusOnly = true;
       setPlaying(false); setTime(past.t - 120); setFocus(past.m); fly(past.pos, 12.3); setPlaying(true); speed(30); },
       caption: () => `準不準一眼就看得到：藍色虛線是系統 15 分鐘前預測「船現在會在哪」，青綠色是實際航跡；細線是兩者的差距（${vesselName(past.m)}）` },
-    { dur: 15, enter() { state.showCone = true; state.pastFocusOnly = false; setFocus(null); speed(60); setTime(3 * 3600); fly([-118.22, 33.73], 12.4); },
+    { dur: 22, enter() { state.showCone = true; state.pastFocusOnly = false; setFocus(null); speed(60); setTime(3 * 3600); fly([-118.22, 33.73], 12.4); },
       caption: () => '船身上的圖案代表船型：貨櫃是貨輪、油桶是油輪、魚是漁船、醫療箱是救援船、警徽是執法船……桃紅色的救援船港內待命時也看得到，派遣時可以納入' },
-    dev && { dur: 30, enter() { speed(60); select(dev); },
+    dev && { dur: 38, enter() { speed(60); select(dev); },
       caption: () => `【模擬情境】${tourCaptionText(dev)}` },
-    gap && { dur: 40, enter() { gapHeld = false; speed(300); select(gap); },
+    gap && { dur: 50, enter() { gapHeld = false; speed(300); select(gap); },
       tick() {
         const s = sarSuggestion(gap);
         if (gapHeld || !s || state.t < gap.td + 300) return;
@@ -1795,29 +1795,29 @@ function recScenes() {
           `拍橘色圓內（半徑 ${(s.r / 1000).toFixed(0)} 公里，只有往任何方向算的 ${Math.round((s.r / s.r0) ** 2 * 100)}% 面積）——拍到船卻沒有 AIS，就是暗船`
           : `【模擬情境】${tourCaptionText(gap)}`;
       } },
-    outage.length && { dur: 20, enter() { stopSelected(); speed(60); setPlaying(false); setTime(tOut);
+    outage.length && { dur: 26, enter() { stopSelected(); speed(60); setPlaying(false); setTime(tOut);
       // 拉近到看得到船影標籤（9 級以上）：以失聯船位置的中位數為中心
       const mid = (v) => v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)];
       fly([mid(outage.map((g) => g.lon)), mid(outage.map((g) => g.lat))], 9.3); },
       caption: () => `08:12 前後，外海 ${outage.length} 艘航行中的船在 2 分鐘內相繼失聯，09:00 整點又一起恢復：系統研判是岸基接收站斷訊，以灰色船影標示，不列為可疑，避免整批誤報` },
-    loiter && { dur: 16, enter() { speed(60); select(loiter); },
+    loiter && { dur: 22, enter() { speed(60); select(loiter); },
       caption: () => `示範：船在「${loiter.d.zone}」內低速停留滿 1 小時，判定「異常滯留」——船錨可能拖壞海纜（海域是示範用的假設範圍）` },
-    { dur: 16, enter() { stopSelected(); setPlaying(false); setTime(20 * 3600); state.byRisk = true; refresh(); panel(true); fly(center, 8.3); },
+    { dur: 22, enter() { stopSelected(); setPlaying(false); setTime(20 * 3600); state.byRisk = true; refresh(); panel(true); fly(center, 8.3); },
       caption: () => '警示依風險分數排序：船型、是否在外海、偏離程度、是否疑似接收站斷訊、是否夜間都會加減分，每一則都寫出理由；值勤人員也可以直接標記「值得關注／誤報」' },
-    D.rescue?.showcase && { dur: 32, enter() { panel(false); startRescue('hungarian'); },
+    D.rescue?.showcase && { dur: 42, enter() { panel(false); startRescue('hungarian'); },
       tick(e) {
-        if (e >= 11 && state.rescue?.mode === 'hungarian') setRescueMode('greedy');
-        if (e >= 21 && state.rescue?.mode === 'greedy' && D.rescue.showcase_rescue) setRescueMode('standby');
+        if (e >= 14 && state.rescue?.mode === 'hungarian') setRescueMode('greedy');
+        if (e >= 28 && state.rescue?.mode === 'greedy' && D.rescue.showcase_rescue) setRescueMode('standby');
       },
       caption: (e) => {
         const R = D.rescue.showcase, S = D.rescue.summary;
-        if (e < 11) return `延伸功能【假設情境】：${R.distress.length} 艘船同時求救，Hungarian 演算法指派附近船隻支援，並規劃避開陸地的航線——總抵達 ${Math.round(R.hungarian.total_min)} 分鐘`;
-        if (e < 21) return `對照「最近的船先去」：${Math.round(R.greedy.total_min)} 分鐘；全天 ${S.scenarios} 個模擬情境平均省 ${S.total_saving_pct}%`;
+        if (e < 14) return `延伸功能【假設情境】：${R.distress.length} 艘船同時求救，Hungarian 演算法指派附近船隻支援，並規劃避開陸地的航線——總抵達 ${Math.round(R.hungarian.total_min)} 分鐘`;
+        if (e < 28) return `對照「最近的船先去」：${Math.round(R.greedy.total_min)} 分鐘；全天 ${S.scenarios} 個模擬情境平均省 ${S.total_saving_pct}%`;
         const W = S.with_rescue;
         return W ? `再把港內待命的救援船納入派遣（出動航速假設 ${W.speed_kn} 節）：有待命救援船的情境，總抵達時間再少 ${W.total_saving_pct}%` : '';
       } },
-    { dur: 24, enter() { stopRescue(); panel(true); setPlaying(false); setTime(12 * 3600); fly(center, 8.3); },
-      caption: (e) => e < 13
+    { dur: 32, enter() { stopRescue(); panel(true); setPlaying(false); setTime(12 * 3600); fly(center, 8.3); },
+      caption: (e) => e < 17
         ? (md ? `7 天實測（6/1～6/7）：融合預測比常速度外推準 ${pct(md.gain)}（95% 區間 ${pct(md.gain_ci[0])}～${pct(md.gain_ci[1])}），7 天每天都較好；` : '') +
           '時鐘下方可切換 6/1～6/7，線上展示：cuiminrui.github.io/seaeye-dashboard'
         : '下一步：接上臺灣周邊海域的衛星 AIS 與 SAR 影像，支援海巡監控、漁業管理與海纜保護——資料欄位相同，程式不用改' },
